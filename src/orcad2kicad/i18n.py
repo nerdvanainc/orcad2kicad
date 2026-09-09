@@ -74,7 +74,7 @@ STRINGS = {
         'status_portable_done': '나이틀리 KiCad 준비 완료',
         'status_suggest_running': '제안 생성 중...',
         # ---- 언어 선택 ----
-        'label_language': '언어',
+        'label_language': 'Language / 언어',   # 한국어를 몰라도 전환할 수 있도록 영문 병기
         # ---- 입력 프레임 ----
         'frame_input': '입력',
         'label_input_mode': '입력 종류:',
