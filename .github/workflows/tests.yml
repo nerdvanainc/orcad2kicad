@@ -1,0 +1,26 @@
+# 공개 저장소용 CI: Windows/Ubuntu 에서 단위 테스트. kicad-cli 가 없는 러너에서는 관련 테스트가 skip 되고,
+# 참조 설계(samples/)는 공개 저장소에 없으므로 그 의존 테스트도 공개 트리에는 포함되지 않는다.
+name: tests
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+jobs:
+  unittest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run unit tests
+        env:
+          O2K_SKIP_BUILD: '1'
+          PYTHONPATH: src
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest discover -s tests -t . -v

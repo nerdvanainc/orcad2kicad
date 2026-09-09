@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+out/
+.pytest_cache/
+*.kicad_prl
+*-backups/
+fp-info-cache
+.superpowers/
+dist/
+build/
+*.spec.bak
