@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from orcad2kicad.pipeline import PipelineOptions, PipelineResult, result_to_json
 from orcad2kicad.verify import NetCompare, NetDiff
 from orcad2kicad.kicad_board import BoardDiff
-from orcad2kicad.explain import explain_result, format_explanation, kicad_gui_next_to, STABLE_SCH_CEILING
+from orcad2kicad.explain import (explain_result, format_explanation, kicad_gui_next_to, STABLE_SCH_CEILING,
+                                 attention_items)
 
 
 def _view(version=20260830):
@@ -37,7 +38,7 @@ class ExplainDsnTest(unittest.TestCase):
         self.assertIn('footprint_link_issues 1', text)
         self.assertIn('PADS 보드를 지정하지 않아', text)
         self.assertIn(f'회로도 포맷 20260830', text)          # 정식판에서 안 열림 안내
-        self.assertTrue(lines[-2].startswith('결론: 문제 없음'), lines[-2])
+        self.assertTrue(lines[-1].startswith('결론: 문제 없음'), lines[-1])
 
     def test_english_and_json(self):
         r = self._result()
@@ -46,15 +47,22 @@ class ExplainDsnTest(unittest.TestCase):
         self.assertIn('conclusion: no problems', text)
         self.assertEqual(result_to_json(r)['explanation'], explain_result(r, 'en'))
 
+    def test_attention_items_helper(self):
+        """GUI 상태 문구가 쓰는 `attention_items` — 전부 통과면 비고, FAIL 이 있으면 항목이 있다."""
+        self.assertEqual(attention_items(self._result(), 'ko'), [])
+        cmp = NetCompare(matched=5, mismatches=[NetDiff(net='X', missing={'R1.1'}, extra=set())])
+        r = self._result(verifications={'kicad': cmp}, exit_code=1)
+        self.assertIn('[3] FAIL', attention_items(r, 'en'))
+
     def test_fail_lists_attention(self):
         cmp = NetCompare(matched=5, mismatches=[NetDiff(net='X', missing={'R1.1'}, extra=set())])
         r = self._result(verifications={'kicad': cmp}, exit_code=1)
         r.erc['by_type']['pin_to_pin'] = 2
         lines = explain_result(r, 'ko')
         self.assertIn('FAIL - 일치 5개', '\n'.join(lines))
-        self.assertTrue(lines[-2].startswith('결론: 확인할 항목 있음'), lines[-2])
-        self.assertIn('[3] FAIL', lines[-2])
-        self.assertIn('ERC pin_to_pin 2', lines[-2])
+        self.assertTrue(lines[-1].startswith('결론: 확인할 항목 있음'), lines[-1])
+        self.assertIn('[3] FAIL', lines[-1])
+        self.assertIn('ERC pin_to_pin 2', lines[-1])
 
     def test_board_diff(self):
         diff = BoardDiff(only_board_refs=['J19', 'J20'], net_compare=NetCompare(matched=130),
@@ -64,7 +72,7 @@ class ExplainDsnTest(unittest.TestCase):
         text = '\n'.join(explain_result(r, 'ko'))
         self.assertIn('보드에만 있는 부품 2개(J19, J20)', text)
         self.assertIn('회로도 넷리스트(정답 .asc 없음)', text)
-        self.assertIn('보드 전용 부품', text.splitlines()[-2])
+        self.assertIn('보드 전용 부품', text.splitlines()[-1])
 
     def test_error(self):
         r = PipelineResult(options=PipelineOptions(dsn='a.DSN'), error='boom')
@@ -91,5 +99,5 @@ class ExplainEdifTest(unittest.TestCase):
         lines = explain_result(r, 'ko')
         self.assertIn('[1][2] 건너뜀', lines[1])
         self.assertIn('출력: 없음', '\n'.join(lines))
-        self.assertTrue(lines[-2].startswith('결론: 문제 없음'))
+        self.assertTrue(lines[-1].startswith('결론: 문제 없음'))
         self.assertLessEqual(STABLE_SCH_CEILING, 20260830)

@@ -67,6 +67,7 @@ STRINGS = {
         'status_idle': '대기 중',
         'status_running': '변환 중...',
         'status_done_pass': '완료 (모든 검증 PASS)',
+        'status_done_check': '완료 (확인할 항목 있음 - 결과 탭의 결론 참조)',
         'status_done_fail': '완료 (검증 FAIL 있음)',
         'status_done_error': '오류 (입출력/kicad-cli)',
         'status_done_exit': '완료 (exit {code})',
@@ -75,6 +76,7 @@ STRINGS = {
         'status_suggest_running': '제안 생성 중...',
         # ---- 언어 선택 ----
         'label_language': 'Language / 언어',   # 한국어를 몰라도 전환할 수 있도록 영문 병기
+        'lang_auto': '자동(시스템 언어)',
         # ---- 입력 프레임 ----
         'frame_input': '입력',
         'label_input_mode': '입력 종류:',
@@ -133,6 +135,7 @@ STRINGS = {
         'col_target': '대상',
         'col_detail': '상세',
         'col_choice': '처리',
+        'label_diff_detail': '선택한 행의 상세:',
         'label_row_choice': '선택한 행의 처리:',
         'note_placeholder_page': '(보드 전용 부품은 99-PCB-ONLY 페이지에 자리표시 심볼로 추가됩니다)',
         # ---- 에이전트 제안 탭 ----
@@ -229,6 +232,7 @@ STRINGS = {
         'status_idle': 'Idle',
         'status_running': 'Converting...',
         'status_done_pass': 'Done (all verifications PASS)',
+        'status_done_check': 'Done (items to check - see the Results tab)',
         'status_done_fail': 'Done (some verifications FAIL)',
         'status_done_error': 'Error (I/O or kicad-cli)',
         'status_done_exit': 'Done (exit {code})',
@@ -236,6 +240,7 @@ STRINGS = {
         'status_portable_done': 'KiCad nightly ready',
         'status_suggest_running': 'Generating suggestions...',
         'label_language': 'Language',
+        'lang_auto': 'Auto (system language)',
         'frame_input': 'Input',
         'label_input_mode': 'Input type:',
         'input_mode_dsn': 'OrCAD .DSN (requires KiCad nightly)',
@@ -288,6 +293,7 @@ STRINGS = {
         'col_target': 'Target',
         'col_detail': 'Detail',
         'col_choice': 'Choice',
+        'label_diff_detail': 'Selected row detail:',
         'label_row_choice': 'Choice for selected row:',
         'note_placeholder_page': '(Board-only parts are added as placeholder symbols on the 99-PCB-ONLY page)',
         'col_sel': 'Sel',
@@ -370,35 +376,41 @@ def t(key, **fmt):
     return text
 
 
-def _windows_ui_lang_candidate():
-    """윈도우 UI 언어(GetUserDefaultUILanguage)를 대략적인 로캘 문자열로.
+def _windows_lang_candidates():
+    """윈도우가 아는 사용자 언어들을 대략적인 로캘 문자열 목록으로.
 
-    한국어면 'ko_KR', 그 외(또는 조회 실패)는 None(모른다는 뜻 — 강제로 'en' 후보를 넣지
-    않는다. 다른 소스가 'ko' 를 말하면 그쪽을 따른다)."""
+    세 가지 출처를 모두 본다 — 표시 언어(GetUserDefaultUILanguage), 지역 형식/사용자 로캘
+    (GetUserDefaultLangID), ANSI 코드 페이지(GetACP, 949 = 한국어). 표시 언어가 영어인 한국어
+    PC(지역 형식만 한국)도 한국어로 시작하게 하려는 것이다. 한국어로 보이는 출처는 'ko_KR',
+    그 외(또는 조회 실패)는 넣지 않는다(강제로 'en' 후보를 만들지 않는다 — 다른 출처가 'ko' 를
+    말하면 그쪽을 따른다)."""
     if os.name != 'nt':
-        return None
+        return []
+    out = []
     try:
-        get_ui_lang = ctypes.windll.kernel32.GetUserDefaultUILanguage    # noqa: SLF001
-        lang_id = get_ui_lang()
+        k32 = ctypes.windll.kernel32    # noqa: SLF001
+        for lang_id in (k32.GetUserDefaultUILanguage(), k32.GetUserDefaultLangID()):
+            if lang_id and (lang_id & 0x3FF) == 0x12:      # LANG_KOREAN = 0x12
+                out.append('ko_KR')
+        if k32.GetACP() == 949:
+            out.append('ko_KR')
     except (AttributeError, OSError, ValueError):
-        return None
-    if not lang_id:
-        return None
-    primary = lang_id & 0x3FF          # LANG_KOREAN = 0x12
-    return 'ko_KR' if primary == 0x12 else None
+        pass
+    return out
 
 
 def detect_default_language():
     """OS 로캘이 한국어(`ko*`)로 보이면 'ko', 아니면 'en'.
 
-    `locale.getlocale()`, `LC_ALL`/`LANG` 환경변수, (윈도우면) `GetUserDefaultUILanguage`
-    중 하나라도 'ko' 로 시작하면 'ko' 다."""
+    `locale.getlocale()`, `LC_ALL`/`LANG` 환경변수, (윈도우면) 표시 언어·지역 형식·ANSI 코드
+    페이지(`_windows_lang_candidates`) 중 하나라도 'ko' 로 시작하면 'ko' 다. GUI 는 사용자가
+    언어를 명시적으로 고르지 않은 동안('auto') 시작할 때마다 이 함수를 다시 부른다."""
     candidates = [os.environ.get('LC_ALL'), os.environ.get('LANG')]
     try:
         candidates.append(locale.getlocale()[0])
     except (ValueError, TypeError):
         pass
-    candidates.append(_windows_ui_lang_candidate())
+    candidates.extend(_windows_lang_candidates())
     for c in candidates:
         if c and str(c).lower().startswith('ko'):
             return 'ko'

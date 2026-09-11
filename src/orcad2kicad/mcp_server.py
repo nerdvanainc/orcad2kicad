@@ -98,7 +98,8 @@ TOOLS = [
             'kicad-cli able to read the schematic format) and [4] board vs schematic. Writes '
             'files to disk. Returns the full pipeline result as JSON: options, input_mode, '
             'summary, text (the human report), verifications, board_diff, erc, files, issues, '
-            'log, kicad_cli, net_names, exit_code (0 pass / 1 verification failed / 2 io error), '
+            'log, kicad_cli, net_names, import_cleanup (sheets/gaps_merged/worksheet when applied '
+            'in dsn/kicad_project mode), exit_code (0 pass / 1 verification failed / 2 io error), '
             'error. This can take tens of seconds on a large design (longer for a .DSN import).'),
         'inputSchema': {
             'type': 'object',
@@ -128,6 +129,12 @@ TOOLS = [
                               'description': "Net naming: 'keep' writes global labels so PADS net names survive (default when board is given); 'kicad' lets KiCad name nets."},
                 'pdf': {'type': 'boolean', 'description': 'Also export a schematic PDF with kicad-cli.'},
                 'strict_board': {'type': 'boolean', 'description': 'Treat board/schematic differences as a failure (exit_code 1).'},
+                'import_cleanup': {'type': 'boolean',
+                                   'description': 'dsn/kicad_project input only: clean up nightly importer '
+                                                  'defects before ERC/PDF - merge hop-gap wire fragments '
+                                                  '(dangling-end markers, unconnected_wire_endpoint ERC noise) '
+                                                  'and set a blank drawing sheet (removes the duplicated title '
+                                                  'block). Default true; set false to keep the raw import.'},
                 'kicad_cli': {'type': 'string', 'description': 'Explicit kicad-cli path; autodetected when omitted (dsn needs one with native OrCAD import support).'},
                 'add_board_only_parts': {'type': 'array', 'items': {'type': 'string'},
                                          'description': 'References that exist only on the board; each gets a placeholder symbol on an extra schematic page. edf input only.'},
@@ -418,6 +425,7 @@ class Server:
             net_names=_arg_choice(args, 'net_names', ('kicad', 'keep')),
             pdf=_arg_bool(args, 'pdf'),
             strict_board=_arg_bool(args, 'strict_board'),
+            import_cleanup=_arg_bool(args, 'import_cleanup', True),
             resolutions=rez)
         given = [n for n in ('edf', 'dsn', 'kicad_project') if getattr(opts, n)]
         if len(given) != 1:

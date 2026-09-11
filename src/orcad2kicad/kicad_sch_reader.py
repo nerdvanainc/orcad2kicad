@@ -261,7 +261,9 @@ def load_kicad_sheets(sch_paths, project=None) -> SchematicView:
         if view.version and version and version != view.version:
             view.issues.append(f'sheet format version differs: {os.path.basename(path)} '
                                f'{version} != {view.version}')
-        view.version = view.version or version
+        # 가장 높은 버전을 프로젝트 버전으로 삼는다 — 이전 실행이 남긴 정식 포맷 시트(P01 등)가
+        # 먼저 읽혀 나이틀리 재임포트 결과를 정식 포맷으로 오판하던 문제(2026-09-11)의 수정.
+        view.version = max(view.version or 0, version or 0)
         view.sheet_files.append(path)
         view.sheet_uuids[path] = sheet_uuid
         view.symbols.extend(syms)
@@ -334,7 +336,9 @@ def _append_sheet(view, path, parsed):
     if view.version and version and version != view.version:
         view.issues.append(f'sheet format version differs: {os.path.basename(path)} '
                            f'{version} != {view.version}')
-    view.version = view.version or version
+    # 가장 높은 버전을 프로젝트 버전으로 삼는다 — 이전 실행이 남긴 정식 포맷 시트(P01 등)가
+    # 먼저 읽혀 나이틀리 재임포트 결과를 정식 포맷으로 오판하던 문제(2026-09-11)의 수정.
+    view.version = max(view.version or 0, version or 0)
     view.sheet_files.append(path)
     view.sheet_uuids[path] = sheet_uuid
     view.symbols.extend(syms)

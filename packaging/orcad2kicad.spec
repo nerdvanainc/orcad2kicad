@@ -26,12 +26,16 @@ HIDDEN_IMPORTS = ['orcad2kicad'] + [f'orcad2kicad.{m}' for m in _O2K_SUBMODULES]
 EXCLUDES = ['numpy', 'pandas', 'matplotlib', 'PyQt5', 'PySide2', 'scipy']
 
 block_cipher = None
+# exe 아이콘 + 창 제목줄 아이콘(패키지 데이터로 같이 넣는다). 생성: python packaging/make_icon.py
+ICON_PATH = os.path.join(SRC_DIR, 'orcad2kicad', 'assets', 'orcad2kicad.ico')
+ICON_DATAS = [(ICON_PATH, os.path.join('orcad2kicad', 'assets'))] if os.path.isfile(ICON_PATH) else []
+ICON_ARG = ICON_PATH if os.path.isfile(ICON_PATH) else None
 
 a_gui = Analysis(
     [os.path.join(SPEC_DIR, 'entry_gui.py')],
     pathex=[SRC_DIR],
     binaries=[],
-    datas=[],
+    datas=ICON_DATAS,
     hiddenimports=HIDDEN_IMPORTS,
     hookspath=[],
     hooksconfig={},
@@ -58,6 +62,7 @@ exe_gui = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
+    icon=ICON_ARG,
     codesign_identity=None,
     entitlements_file=None,
 )
@@ -66,7 +71,7 @@ a_cli = Analysis(
     [os.path.join(SPEC_DIR, 'entry_cli.py')],
     pathex=[SRC_DIR],
     binaries=[],
-    datas=[],
+    datas=ICON_DATAS,
     hiddenimports=HIDDEN_IMPORTS,
     hookspath=[],
     hooksconfig={},
@@ -93,6 +98,7 @@ exe_cli = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
+    icon=ICON_ARG,
     codesign_identity=None,
     entitlements_file=None,
 )

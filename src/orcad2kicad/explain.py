@@ -9,7 +9,7 @@ CLI(`--explain`)와 MCP JSON 은 영문(`en`, 콘솔 규칙: ASCII)을 쓴다. �
 from __future__ import annotations
 import os
 
-from .branding import CONTACT_KO, CONTACT_EN
+
 
 # ERC 위반 유형별 설명. level: 'info'(연결과 무관, 조치 불필요) | 'check'(확인 권장) | 'fix'(조치 필요).
 ERC_TYPES = {
@@ -83,13 +83,13 @@ def _cmp_text(cmp, what_ko, what_en, lang):
             f'{n_ref} only in the reference. See the net table.')
 
 
-def explain_result(result, lang='ko'):
-    """PipelineResult -> 설명 줄 목록(`lang`: 'ko' | 'en'). 판정은 결과에 있는 값만 해석한다."""
+def _explain(result, lang='ko'):
+    """PipelineResult -> (설명 줄 목록, 확인할 항목 목록). 판정은 결과에 있는 값만 해석한다."""
     ko = lang == 'ko'
     L = []
     if result.error:
         L.append(('오류로 중단됨: ' if ko else 'stopped with an error: ') + str(result.error))
-        return L
+        return L, []
     opts = result.options
     mode = getattr(result, 'input_mode', 'edif')
     attention = []          # 결론에 모을 "봐야 할 것"
@@ -255,8 +255,19 @@ def explain_result(result, lang='ko'):
         else:
             L.append('conclusion: no problems. All connectivity checks passed; remaining ERC items are importer artefacts or KiCad conventions unrelated to connectivity.'
                      if erc else 'conclusion: no problems. All checks that ran passed.')
-    L.append(CONTACT_KO if ko else CONTACT_EN)
-    return L
+    return L, attention
+
+
+def explain_result(result, lang='ko'):
+    """PipelineResult -> 설명 줄 목록(`lang`: 'ko' | 'en')."""
+    return _explain(result, lang)[0]
+
+
+def attention_items(result, lang='ko'):
+    """결론 줄에 모이는 "확인할 항목" 목록(비어 있으면 문제 없음). 종료 코드가 0 이어도 [4] 넷 차이·
+    회로도 전용 부품·ERC check 항목이 있으면 비어 있지 않다 — GUI 상태 표시가 이걸로 "모든 검증
+    PASS" 와 "확인할 항목 있음" 을 가른다."""
+    return _explain(result, lang)[1]
 
 
 def kicad_gui_next_to(cli_path):

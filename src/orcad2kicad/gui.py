@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import queue
 import subprocess
 import sys
@@ -39,6 +40,18 @@ from .i18n import t, get_language, detect_default_language, set_language as _set
 # 언어 선택 콤보박스에 보일 두 선택지(이 표시 이름 자체는 언어와 무관 — 늘 두 언어 이름 그대로).
 LANG_DISPLAY = {'ko': '한국어', 'en': 'English'}
 LANG_DISPLAY_TO_CODE = {v: k for k, v in LANG_DISPLAY.items()}
+LANG_CHOICES = ('auto', 'ko', 'en')     # 설정 파일의 'language' 값. 'auto' = 시작할 때마다 OS 로캘 감지
+
+
+def lang_choice_label(choice):
+    """콤보에 보여줄 언어 선택지 문구('auto' 는 현재 언어로 번역된다)."""
+    return t('lang_auto') if choice == 'auto' else LANG_DISPLAY.get(choice, LANG_DISPLAY['ko'])
+
+
+def lang_choice_from_label(label):
+    if label == t('lang_auto'):
+        return 'auto'
+    return LANG_DISPLAY_TO_CODE.get(label, 'auto')
 
 # ---------- 표 선택지 문자열(순수 함수와 GUI가 함께 쓴다) ----------
 # 현재 언어에 따라 바뀌므로 함수다 — 모듈 임포트 시점 값을 고정해 버리면(평범한 상수) 언어를
@@ -48,6 +61,64 @@ def ADD_TO_SCH(): return t('choice_add_to_sch')
 def FP_BOARD(): return t('choice_fp_board')
 def FP_ORCAD(): return t('choice_fp_orcad')
 def HIDE(): return t('choice_hide')
+
+
+LOG_FONT = ('Consolas', 10)
+# 로그 줄 종류별 표시(색·굵기). 로그는 파이프라인의 콘솔 출력 그대로라 줄 첫머리/키워드로 종류를 나눈다.
+LOG_TAGS = {
+    'section': {'font': ('Consolas', 11, 'bold'), 'foreground': '#1a3d7c', 'background': '#e8eef8',
+                'spacing1': 8, 'spacing3': 3},
+    'step': {'font': ('Consolas', 10, 'bold'), 'foreground': '#1a3d7c'},
+    'pass': {'font': ('Consolas', 10, 'bold'), 'foreground': '#1e7d32'},
+    'fail': {'font': ('Consolas', 10, 'bold'), 'foreground': '#c62828'},
+    'warn': {'foreground': '#b26a00'},
+    'error': {'foreground': '#c62828', 'background': '#fdecea'},
+    'muted': {'foreground': '#6b6b6b'},
+    'conclusion': {'font': ('Consolas', 10, 'bold'), 'background': '#fff8dc', 'spacing1': 4},
+}
+_STEP_RE = re.compile(r'\[(\d|DIFF|REF ONLY|OURS ONLY)\]')
+
+# 상태 문구(실행 버튼 옆) 단계별 색. 밋밋한 회색 한 줄이라 완료를 알아채기 어렵다는 지적에 따라
+# 굵게 + 결과에 따라 색을 달리한다.
+STATUS_COLORS = {
+    'idle': '#606060', 'running': '#1a3d7c', 'pass': '#1e7d32', 'check': '#b26a00',
+    'fail': '#c62828', 'error': '#c62828',
+}
+
+
+ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'orcad2kicad.ico')
+
+# UI 글꼴: 한국어면 맑은 고딕, 그 외는 Segoe UI(둘 다 Windows 기본 탑재). 없는 PC 에서는 Tk 가
+# 알아서 대체한다. 크기 10 — Tk 기본(9)보다 한 단계 크다.
+UI_FONT_FAMILY = {'ko': 'Malgun Gothic', 'en': 'Segoe UI'}
+UI_FONT_SIZE = 10
+ACCENT = '#1a3d7c'
+
+
+def log_line_tag(line):
+    """로그 한 줄 -> `LOG_TAGS` 키(없으면 None). 우선순위: 오류 > 결론 > FAIL > PASS > 경고 > 단계 > 정보."""
+    s = (line or '').rstrip()
+    ls = s.lstrip()
+    if not ls:
+        return None
+    low = ls.lower()
+    if ls.startswith('==='):
+        return 'section'
+    if low.startswith(('error', 'traceback')) or '[fix]' in low:
+        return 'error'
+    if ls.startswith(('conclusion:', '결론:')):
+        return 'conclusion'
+    if re.search(r'\bFAIL\b', s):
+        return 'fail'
+    if re.search(r'\bPASS\b', s):
+        return 'pass'
+    if '[check]' in low or low.startswith('warning'):
+        return 'warn'
+    if _STEP_RE.match(ls):
+        return 'step'
+    if '[info' in low:
+        return 'muted'
+    return None
 
 
 def KIND_LABELS():
@@ -346,11 +417,16 @@ class App(tk.Tk if tk is not None else object):
         self.running = False
 
         settings = load_settings()
+        # 언어: 사용자가 콤보에서 명시적으로 고른 값('ko'/'en')만 그대로 쓰고, 그 외('auto' 또는
+        # 없음)는 시작할 때마다 OS 로캘을 다시 감지한다 — 감지 결과를 설정에 굳혀 두지 않는다.
         lang = settings.get('language')
+        self.lang_choice = lang if lang in ('ko', 'en') else 'auto'
         _set_language(lang if lang in ('ko', 'en') else detect_default_language())
 
-        self.geometry('1180x820')
-        self.minsize(900, 640)
+        self.geometry('1180x900')
+        self.minsize(900, 700)
+        self._apply_theme()
+        self._set_window_icon()
         self._build_vars()
         self._build_input_frame()
         self._build_ai_frame()
@@ -364,13 +440,77 @@ class App(tk.Tk if tk is not None else object):
         self.protocol('WM_DELETE_WINDOW', self.on_close)
         self._poll_id = self.after(100, self._poll)
 
+    def _apply_theme(self):
+        """기본 Tk 모양(9pt 글꼴, 얇은 여백, 평평한 탭)을 손본다 — 글꼴 한 단계 키우고, 프레임
+        제목·표 머리글은 굵게, 버튼·입력칸 여백을 넓히고, 실행 버튼은 강조 스타일을 쓴다.
+        언어 전환(rebuild_ui)에서도 다시 불러 글꼴 가족을 언어에 맞춘다."""
+        family = UI_FONT_FAMILY.get(get_language(), UI_FONT_FAMILY['en'])
+        try:
+            for name in ('TkDefaultFont', 'TkTextFont', 'TkMenuFont', 'TkHeadingFont',
+                         'TkCaptionFont', 'TkTooltipFont'):
+                f = tkfont.nametofont(name)
+                f.configure(family=family, size=UI_FONT_SIZE)
+            tkfont.nametofont('TkHeadingFont').configure(weight='bold')
+            tkfont.nametofont('TkFixedFont').configure(family=LOG_FONT[0], size=LOG_FONT[1])
+        except tk.TclError:
+            pass
+        style = ttk.Style(self)
+        try:
+            if 'vista' in style.theme_names():
+                style.theme_use('vista')
+        except tk.TclError:
+            pass
+        style.configure('.', font=(family, UI_FONT_SIZE))
+        style.configure('TLabelframe.Label', font=(family, UI_FONT_SIZE, 'bold'), foreground=ACCENT)
+        style.configure('TButton', padding=(10, 4))
+        style.configure('Run.TButton', font=(family, UI_FONT_SIZE + 1, 'bold'), padding=(18, 6))
+        style.configure('TEntry', padding=3)
+        style.configure('TCombobox', padding=2)
+        style.configure('Treeview', rowheight=UI_FONT_SIZE * 2 + 6, font=(family, UI_FONT_SIZE))
+        style.configure('Treeview.Heading', font=(family, UI_FONT_SIZE, 'bold'))
+        style.configure('TNotebook.Tab', padding=(16, 7), font=(family, UI_FONT_SIZE))
+        style.configure('O2K.TNotebook.Tab', padding=(16, 7), font=(family, UI_FONT_SIZE))
+        style.map('O2K.TNotebook.Tab', font=[('selected', (family, UI_FONT_SIZE, 'bold'))])
+        style.configure('TCheckbutton', padding=(2, 2))
+        style.configure('TRadiobutton', padding=(2, 2))
+
+    def _set_window_icon(self):
+        """창 제목줄/작업 표시줄 아이콘(패키지 안 `assets/orcad2kicad.ico`). 없거나 실패해도 조용히 넘어간다."""
+        try:
+            if os.path.isfile(ICON_PATH):
+                self.iconbitmap(default=ICON_PATH)
+        except tk.TclError:
+            pass
+
     def set_language(self, lang):
         """언어를 바꾸고 창 전체를 새 언어로 다시 그린다(재시작 없이).
 
         위젯 개수가 많지 않은 도구용 GUI라 통째로 다시 그리는 쪽이 각 위젯의 텍스트를
         일일이 따라다니며 갱신하는 것보다 훨씬 덜 깨진다 — `rebuild_ui`가 현재 값/결과/
         제안을 그대로 이어받는다."""
-        if lang not in ('ko', 'en') or lang == get_language():
+        if lang not in ('ko', 'en'):
+            return
+        choice_changed = getattr(self, 'lang_choice', None) != lang
+        self.lang_choice = lang                     # 명시적 선택 — 설정에 그대로 저장된다
+        if lang == get_language():
+            if choice_changed:
+                save_settings(self.settings_dict())
+            return
+        _set_language(lang)
+        save_settings(self.settings_dict())
+        self.rebuild_ui()
+
+    def set_language_choice(self, choice):
+        """콤보 선택 처리. 'ko'/'en' 은 `set_language`, 'auto' 는 OS 로캘을 다시 감지해 적용하고
+        설정에는 'auto' 를 남긴다(다음 시작 때도 다시 감지)."""
+        if choice in ('ko', 'en'):
+            self.set_language(choice)
+            return
+        self.lang_choice = 'auto'
+        lang = detect_default_language()
+        if lang == get_language():
+            save_settings(self.settings_dict())
+            self.var_language_label.set(lang_choice_label('auto'))
             return
         _set_language(lang)
         save_settings(self.settings_dict())
@@ -378,6 +518,7 @@ class App(tk.Tk if tk is not None else object):
 
     def rebuild_ui(self):
         """현재 위젯 값·결과·제안을 보존한 채 창 내용을 전부 다시 만든다(언어 전환용)."""
+        self._apply_theme()
         opts = self.build_options()
         backend_kind = self.var_backend_kind.get()
         model = self.var_model.get()
@@ -434,7 +575,7 @@ class App(tk.Tk if tk is not None else object):
         self.var_model = tk.StringVar()
         self.var_agents = {name: tk.BooleanVar(value=True) for name, _ in AGENT_LABELS()}
         self.var_backend_kind.trace_add('write', self._sync_backend_label)
-        self.var_language_label = tk.StringVar(value=LANG_DISPLAY[get_language()])
+        self.var_language_label = tk.StringVar(value=lang_choice_label(self.lang_choice))
 
     def _sync_backend_label(self, *_a):
         kind = self.var_backend_kind.get()
@@ -442,7 +583,7 @@ class App(tk.Tk if tk is not None else object):
         self.refresh_backend_status()
 
     def _on_language_selected(self, _event=None):
-        self.set_language(LANG_DISPLAY_TO_CODE.get(self.var_language_label.get(), 'ko'))
+        self.set_language_choice(lang_choice_from_label(self.var_language_label.get()))
 
     # ----- 입력 프레임 -----
     def _row_entry(self, parent, row, label, var, browse=None, width=78):
@@ -475,7 +616,7 @@ class App(tk.Tk if tk is not None else object):
         lang_row.grid(row=0, column=1, sticky='e')
         ttk.Label(lang_row, text=t('label_language') + ':').pack(side='left', padx=(0, 4))
         lang_combo = ttk.Combobox(lang_row, textvariable=self.var_language_label, state='readonly',
-                                  width=10, values=[LANG_DISPLAY['ko'], LANG_DISPLAY['en']])
+                                  width=20, values=[lang_choice_label(c) for c in LANG_CHOICES])
         lang_combo.pack(side='left')
         lang_combo.bind('<<ComboboxSelected>>', self._on_language_selected)
         self.lang_combo = lang_combo
@@ -584,11 +725,14 @@ class App(tk.Tk if tk is not None else object):
     def _build_run_frame(self):
         f = ttk.Frame(self)
         f.pack(fill='x', padx=8, pady=4)
-        self.btn_run = ttk.Button(f, text=t('btn_run'), command=self.start_run)
+        self.btn_run = ttk.Button(f, text=t('btn_run'), command=self.start_run, style='Run.TButton')
         self.btn_run.pack(side='left')
         self.progress = ttk.Progressbar(f, mode='indeterminate', length=180)
         self.progress.pack(side='left', padx=10)
-        ttk.Label(f, textvariable=self.var_status).pack(side='left', padx=6)
+        self.lbl_status = tk.Label(f, textvariable=self.var_status,
+                                   font=(UI_FONT_FAMILY.get(get_language(), 'Segoe UI'), UI_FONT_SIZE, 'bold'),
+                                   foreground=STATUS_COLORS['idle'])
+        self.lbl_status.pack(side='left', padx=6)
         ttk.Button(f, text=t('btn_about'), command=self.show_about).pack(side='right')
         site_label = ttk.Label(f, text=SITE_SHORT, foreground='blue', cursor='hand2')
         font = tkfont.Font(site_label, site_label.cget('font'))
@@ -610,8 +754,13 @@ class App(tk.Tk if tk is not None else object):
         ttk.Button(btns, text=t('btn_close'), command=top.destroy).pack(side='left', padx=4)
 
     # ----- 탭 -----
+    TAB_KEYS = ('tab_log', 'tab_verify', 'tab_issues', 'tab_diff', 'tab_suggestions', 'tab_results')
+
     def _build_notebook(self):
-        nb = ttk.Notebook(self)
+        # 기본 ttk 탭은 작고 평평해서 어떤 탭이 있는지 눈에 잘 안 띈다 — 여백·글꼴을 키운다.
+        style = ttk.Style(self)
+        style.configure('O2K.TNotebook.Tab', padding=(16, 7), font=('Segoe UI', 10))
+        nb = ttk.Notebook(self, style='O2K.TNotebook')
         nb.pack(fill='both', expand=True, padx=8, pady=(4, 8))
         self.notebook = nb
         self._build_log_tab(nb)
@@ -624,7 +773,9 @@ class App(tk.Tk if tk is not None else object):
     def _build_log_tab(self, nb):
         f = ttk.Frame(nb)
         nb.add(f, text=t('tab_log'))
-        self.log_text = tk.Text(f, wrap='word', height=10)
+        self.log_text = tk.Text(f, wrap='word', height=10, font=LOG_FONT)
+        for tag, cfg in LOG_TAGS.items():
+            self.log_text.tag_configure(tag, **cfg)
         sb = ttk.Scrollbar(f, orient='vertical', command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=sb.set)
         self.log_text.pack(side='left', fill='both', expand=True)
@@ -659,21 +810,10 @@ class App(tk.Tk if tk is not None else object):
     def _build_diff_tab(self, nb):
         f = ttk.Frame(nb)
         nb.add(f, text=t('tab_diff'))
-        body = ttk.Frame(f)
-        body.pack(side='top', fill='both', expand=True, padx=4, pady=4)
-        cols = ('kind', 'target', 'detail', 'choice')
-        self.diff_tree = ttk.Treeview(body, columns=cols, show='headings', selectmode='browse')
-        for col, text, width in (('kind', t('col_kind'), 140), ('target', t('col_target'), 90),
-                                 ('detail', t('col_detail'), 620), ('choice', t('col_choice'), 130)):
-            self.diff_tree.heading(col, text=text)
-            self.diff_tree.column(col, width=width, anchor='w')
-        sb = ttk.Scrollbar(body, orient='vertical', command=self.diff_tree.yview)
-        self.diff_tree.configure(yscrollcommand=sb.set)
-        self.diff_tree.pack(side='left', fill='both', expand=True)
-        sb.pack(side='right', fill='y')
-        self.diff_tree.bind('<<TreeviewSelect>>', lambda _e: self.on_diff_select())
+        # 아래쪽(처리 콤보 줄 → 상세 창)을 먼저 bottom 으로 붙여 공간을 확보하고, 표가 나머지를 쓴다.
+        # (표를 먼저 expand 로 붙이면 창이 낮을 때 아래 줄들이 잘려 안 보인다.)
         bar = ttk.Frame(f)
-        bar.pack(fill='x', padx=4, pady=(0, 6))
+        bar.pack(side='bottom', fill='x', padx=4, pady=(0, 6))
         ttk.Label(bar, text=t('label_row_choice')).pack(side='left')
         self.diff_combo = ttk.Combobox(bar, textvariable=self.var_diff_choice,
                                        state='readonly', width=18, values=[IGNORE()])
@@ -683,6 +823,25 @@ class App(tk.Tk if tk is not None else object):
                    command=self.apply_resolutions_and_rerun).pack(side='left', padx=12)
         ttk.Label(bar, text=t('note_placeholder_page'),
                   foreground='#606060').pack(side='left', padx=6)
+        # 상세 열은 넷 차이처럼 긴 내용이 잘려 보인다 — 선택한 행의 상세를 아래에 전부 펼쳐 보인다.
+        detail_box = ttk.LabelFrame(f, text=t('label_diff_detail'))
+        detail_box.pack(side='bottom', fill='x', padx=4, pady=(0, 4))
+        self.diff_detail = tk.Text(detail_box, wrap='word', height=4, font=LOG_FONT,
+                                   state='disabled', relief='flat', background='#f7f7f7')
+        self.diff_detail.pack(fill='x', padx=4, pady=4)
+        body = ttk.Frame(f)
+        body.pack(side='top', fill='both', expand=True, padx=4, pady=4)
+        cols = ('kind', 'target', 'detail', 'choice')
+        self.diff_tree = ttk.Treeview(body, columns=cols, show='headings', selectmode='browse', height=8)
+        for col, text, width in (('kind', t('col_kind'), 140), ('target', t('col_target'), 90),
+                                 ('detail', t('col_detail'), 620), ('choice', t('col_choice'), 130)):
+            self.diff_tree.heading(col, text=text)
+            self.diff_tree.column(col, width=width, anchor='w')
+        sb = ttk.Scrollbar(body, orient='vertical', command=self.diff_tree.yview)
+        self.diff_tree.configure(yscrollcommand=sb.set)
+        self.diff_tree.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
+        self.diff_tree.bind('<<TreeviewSelect>>', lambda _e: self.on_diff_select())
 
     def _build_sugg_tab(self, nb):
         f = ttk.Frame(nb)
@@ -828,7 +987,7 @@ class App(tk.Tk if tk is not None else object):
                 'strict_board': bool(self.var_strict.get()),
                 'backend': self.var_backend_kind.get(), 'model': self.var_model.get(),
                 'agents': [n for n, _ in AGENT_LABELS() if self.var_agents[n].get()],
-                'language': get_language()}
+                'language': self.lang_choice}
 
     def apply_settings(self, data):
         """저장된 설정을 위젯에 반영한다(없는 키는 그대로 둔다)."""
@@ -854,6 +1013,8 @@ class App(tk.Tk if tk is not None else object):
                 self.var_agents[name].set(name in data['agents'])
         if data.get('language') in ('ko', 'en'):
             self.set_language(data['language'])       # 이미 같은 언어면 조용히 무시(rebuild 없음)
+        elif data.get('language') == 'auto':
+            self.lang_choice = 'auto'
 
     # ----- 실행(스레드) -----
     def _log(self, line):
@@ -933,7 +1094,7 @@ class App(tk.Tk if tk is not None else object):
         self.var_kicad_cli.set(cli)
         save_settings(self.settings_dict())
         self.append_log(f'kicad-cli: {cli}')
-        self.var_status.set(t('status_portable_done'))
+        self.set_status(t('status_portable_done'), 'pass')
 
     def run_agents_async(self):
         """'제안 생성' — 마지막 결과를 입력으로 에이전트를 워커 스레드에서 돌린다."""
@@ -979,7 +1140,7 @@ class App(tk.Tk if tk is not None else object):
         else:
             self.progress.stop()
         if status:
-            self.var_status.set(status)
+            self.set_status(status, 'running' if running else 'idle')
 
     # ----- 큐 폴링 -----
     def _poll(self):
@@ -1014,12 +1175,28 @@ class App(tk.Tk if tk is not None else object):
         self.log_text.delete('1.0', 'end')
 
     def append_log(self, line):
-        self.log_text.insert('end', (line or '') + '\n')
+        tag = log_line_tag(line)
+        self.log_text.insert('end', (line or '') + '\n', tag if tag else ())
         self.log_text.see('end')
+
+    def _set_tab_count(self, key, n):
+        """탭 제목에 항목 수를 붙인다('이슈 (3)') — 내용이 있는 탭이 한눈에 보이게."""
+        try:
+            idx = self.TAB_KEYS.index(key)
+            self.notebook.tab(idx, text=t(key) + (f' ({n})' if n else ''))
+        except (ValueError, tk.TclError, AttributeError):
+            pass
+
+    def set_status(self, text, level='idle'):
+        """상태 문구 + 단계별 색('idle'|'running'|'pass'|'check'|'fail'|'error')."""
+        self.var_status.set(text)
+        lbl = getattr(self, 'lbl_status', None)
+        if lbl is not None:
+            lbl.configure(foreground=STATUS_COLORS.get(level, STATUS_COLORS['idle']))
 
     def on_error(self, text):
         self.append_log('error: ' + (text or '').strip().splitlines()[-1])
-        self.var_status.set(t('dlg_error_title'))
+        self.set_status(t('dlg_error_title'), 'error')
         messagebox.showerror(t('dlg_error_title'), text)
 
     def on_result(self, result):
@@ -1032,7 +1209,18 @@ class App(tk.Tk if tk is not None else object):
         self.set_files(result.files, getattr(result, 'input_mode', 'edif'))
         self.sync_net_names(result)
         codes = {0: t('status_done_pass'), 1: t('status_done_fail'), 2: t('status_done_error')}
-        self.var_status.set(codes.get(result.exit_code, t('status_done_exit', code=result.exit_code)))
+        levels = {0: 'pass', 1: 'fail', 2: 'error'}
+        status = codes.get(result.exit_code, t('status_done_exit', code=result.exit_code))
+        level = levels.get(result.exit_code, 'check')
+        if result.exit_code == 0:
+            # exit 0 이라도 [4] 넷 차이·회로도 전용 부품·ERC check 가 있으면 "모든 검증 PASS" 는 거짓말이다.
+            try:
+                from .explain import attention_items
+                if attention_items(result, get_language()):
+                    status, level = t('status_done_check'), 'check'
+            except Exception:                        # 설명 생성 실패는 상태 표시를 막지 않는다
+                pass
+        self.set_status(status, level)
         self.set_explanation(result)
         if result.error:
             self.append_log(f'error: {result.error}')
@@ -1114,6 +1302,7 @@ class App(tk.Tk if tk is not None else object):
             self.issue_list.insert('end', text)
             shown += 1
         self.var_issue_count.set(t('issue_count', shown=shown, total=len(self.issues)))
+        self._set_tab_count('tab_issues', len(self.issues))
 
     # ----- 보드 차이 -----
     def set_diff_rows(self, rows):
@@ -1125,6 +1314,8 @@ class App(tk.Tk if tk is not None else object):
                                                      r['target'], r['detail'], r['current']))
         self.var_diff_choice.set('')
         self.diff_combo.configure(values=[IGNORE()])
+        self._set_diff_detail('')
+        self._set_tab_count('tab_diff', len(self.diff_data))
 
     def _selected_diff_index(self):
         sel = self.diff_tree.selection()
@@ -1143,6 +1334,16 @@ class App(tk.Tk if tk is not None else object):
         row = self.diff_data[idx]
         self.diff_combo.configure(values=list(row['choices']))
         self.var_diff_choice.set(row['current'])
+        self._set_diff_detail(f"{row['target']}: {row['detail']}")
+
+    def _set_diff_detail(self, text):
+        box = getattr(self, 'diff_detail', None)
+        if box is None:
+            return
+        box.configure(state='normal')
+        box.delete('1.0', 'end')
+        box.insert('1.0', text or '')
+        box.configure(state='disabled')
 
     def on_diff_choice(self):
         idx = self._selected_diff_index()
@@ -1170,6 +1371,7 @@ class App(tk.Tk if tk is not None else object):
         for s in self.suggestions:
             s.selected = False if s.kind in ('pin_type', 'note') else True
         self._render_suggestions()
+        self._set_tab_count('tab_suggestions', len(self.suggestions))
         if not self.suggestions:
             self.append_log('agents: no suggestions')
 

@@ -47,6 +47,8 @@ class PipelineOptions:
     strict_board: bool = False
     stable_format: bool = True   # kicad-project/dsn 모드: 나이틀리 결과를 정식 KiCad 10.0
                                   # 포맷(루트 시트 + 하위 시트)으로 재구성한다(--nightly-format 로 끔).
+    import_cleanup: bool = True  # kicad-project/dsn 모드: 임포터 결함 후처리(hop 갭 병합 +
+                                  # 빈 도면 양식, kicad_cleanup.cleanup_project) — --no-import-cleanup 로 끔.
     resolutions: Resolutions = field(default_factory=Resolutions)
 
 
@@ -66,6 +68,7 @@ class PipelineResult:
     log: list = field(default_factory=list)             # 리포트 본문 줄(= 진행 메시지). format_result 가 그대로 쓴다
     kicad_cli: str = None
     net_names: str = 'kicad'
+    import_cleanup: dict = None          # kicad_cleanup.cleanup_project() 의 반환값(적용했으면)
     exit_code: int = 0
     error: str = None                    # 입력/출력 오류 메시지 (exit 2, 그 시점에 중단)
     ref_nets: dict = None                # 기준 PADS 넷리스트({넷: {REF.PIN}}) — 재실행/비교용
@@ -410,6 +413,39 @@ def _stage_project(pro_path, outdir, result, emit):
     return os.path.join(dst_dir, name)
 
 
+def _remove_previous_sheets(outdir, stem, emit):
+    """같은 outdir 에 같은 프로젝트 이름으로 **다시** 변환할 때, 이전 실행이 남긴 시트 파일을 지운다.
+
+    나이틀리 임포트 결과는 루트(`<stem>.kicad_sch`)와 `P02_…` 이후 시트만 덮어쓰고, 재구성
+    (`kicad_stable`)이 루트에서 떼어 낸 첫 페이지 `P01_….kicad_sch` 는 임포터가 모르는 이름이라
+    그대로 남는다. 그러면 재구성이 그 잔재를 첫 페이지로 다시 집어 쓰고(이름 충돌 회피 규칙 때문에
+    새 첫 페이지는 만들어지지 않음), 포맷 판정도 흔들린다(2026-09-11 실제 사고: 루트가 20260830 인
+    채 남아 정식 KiCad 가 열지 못함). 이전 `.kicad_pro` 를 읽어 그 프로젝트 뷰가 시트로 보는 파일을
+    지운다. 리더와 재구성은 폴더의 모든 `.kicad_sch` 를 이 프로젝트의 페이지로 보므로(출력 폴더는
+    프로젝트 하나 전용이 전제) 사실상 폴더의 시트 전부다. 이전 `.kicad_pro` 가 없거나 읽지 못하면
+    아무 것도 지우지 않는다."""
+    old_pro = os.path.join(outdir, stem + '.kicad_pro')
+    if not os.path.isfile(old_pro):
+        return 0
+    try:
+        from .kicad_sch_reader import load_kicad_project
+        old_view = load_kicad_project(old_pro)
+    except (OSError, ValueError):
+        return 0
+    removed = 0
+    for path in old_view.sheet_files:
+        if os.path.normcase(os.path.dirname(os.path.abspath(path))) != os.path.normcase(os.path.abspath(outdir)):
+            continue
+        try:
+            os.remove(path)
+            removed += 1
+        except OSError:
+            pass
+    if removed:
+        emit(f'previous output: removed {removed} sheet files of {stem} before re-import')
+    return removed
+
+
 _IMPORT_EXTS = ('.kicad_pro', '.kicad_sch', '.kicad_pcb', '.kicad_prl')
 
 
@@ -468,6 +504,7 @@ def _import_dsn(opts, result, emit):
             result.error = str(e)
             result.exit_code = 2
             return None, None
+        _remove_previous_sheets(outdir, stem, emit)
         moved = _move_import_output(tmp, outdir)
         pro = os.path.join(outdir, stem + '.kicad_pro')
         if not os.path.isfile(pro):
@@ -736,6 +773,19 @@ def run_kicad_project(opts, result, emit):
     result.files['lib'] = lib_path
     emit(f'symbols: {n_sym} extracted -> {os.path.basename(lib_path)} (sym-lib-table written)')
 
+    # ---- 4b) 임포트 결함 후처리(hop 갭 병합 + 빈 도면 양식) ----
+    # 문자열 수준 수정이라 시트 포맷 버전과 무관하게 적용된다(--nightly-format 로 재구성을 꺼도
+    # 그대로 동작) — kicad_stable 이 건드리는 (version …)/generator_version/경로 치환과 겹치지
+    # 않는다. ERC/[3]/PDF 보다 먼저 해야 그 결과가 정리된 파일을 반영한다.
+    if opts.import_cleanup:
+        from .kicad_cleanup import cleanup_project
+        cleanup = cleanup_project(pro)
+        result.import_cleanup = cleanup
+        parts = [f"{cleanup['gaps_merged']} hop gaps merged in {cleanup['sheets']} sheets"]
+        if cleanup['worksheet']:
+            parts.append('blank worksheet set')
+        emit('import cleanup: ' + ', '.join(parts))
+
     # ---- 5) kicad-cli: ERC / [3] / PDF ----
     cli_path = pick_cli_for_schematic(view.version, opts.kicad_cli)
     result.kicad_cli = cli_path
@@ -893,5 +943,6 @@ def result_to_json(result: PipelineResult) -> dict:
             'footprint_sources': dict(result.footprint_sources),
             'kicad_cli': result.kicad_cli,
             'net_names': result.net_names,
+            'import_cleanup': dict(result.import_cleanup) if result.import_cleanup else None,
             'exit_code': result.exit_code,
             'error': result.error}

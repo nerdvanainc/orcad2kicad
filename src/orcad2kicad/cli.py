@@ -11,6 +11,7 @@ usage: python -m orcad2kicad.cli [IN.EDF | --kicad-project PRO | --dsn FILE]
                                   [--board FILE] [--net-names {kicad,keep}] [--strict-board]
                                   [--add-board-part REF] [--footprint-choice REF=board|orcad]
                                   [--pin-type SYMBOL:PIN=TYPE] [--nightly-format]
+                                  [--no-import-cleanup]
        python -m orcad2kicad.cli --fetch-kicad-nightly [DIR] [--kicad-nightly-installer FILE]
                                   [--force-fetch] [--no-download-tools]
 GUI 로 쓰려면 `python -m orcad2kicad` (tkinter 창).
@@ -129,6 +130,9 @@ def main(argv=None):
                      help='kicad-project/dsn mode: keep the importer native format '
                           '(KiCad 10.99+ nightly only) instead of restructuring into the stable '
                           'KiCad 10.0 hierarchy (default: restructure)')
+    ap.add_argument('--no-import-cleanup', dest='import_cleanup', action='store_false',
+                     help='kicad-project/dsn mode: skip post-import cleanup (merging hop-gap wire '
+                          'fragments, blank drawing sheet) that runs by default before ERC/PDF')
     # 불일치 해소(3단계-B Task 2). GUI 없이도 같은 결정을 줄 수 있게 한 플래그들.
     ap.add_argument('--add-board-part', action='append', default=[], metavar='REF',
                      help='add a board-only part as a placeholder symbol on page 99-PCB-ONLY (repeatable)')
@@ -166,7 +170,7 @@ def main(argv=None):
         netlist=args.netlist, board=args.board, outdir=args.outdir,
         project=args.project, kicad_cli=args.kicad_cli, net_names=args.net_names,
         pdf=args.pdf, strict_board=args.strict_board, stable_format=args.stable_format,
-        resolutions=rez))
+        import_cleanup=args.import_cleanup, resolutions=rez))
     if result.error:                       # 입력/출력 오류: stdout 에는 아무것도 쓰지 않는다
         print(f'error: {result.error}', file=sys.stderr)
         return result.exit_code

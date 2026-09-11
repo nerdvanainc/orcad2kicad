@@ -85,7 +85,8 @@ class DetectDefaultLanguageTest(unittest.TestCase):
 
     def _detect(self, locale_value=None, windows_candidate=None):
         with mock.patch.object(i18n.locale, 'getlocale', return_value=(locale_value, 'UTF-8')):
-            with mock.patch.object(i18n, '_windows_ui_lang_candidate', return_value=windows_candidate):
+            with mock.patch.object(i18n, '_windows_lang_candidates',
+                                   return_value=[windows_candidate] if windows_candidate else []):
                 return i18n.detect_default_language()
 
     def test_lang_env_korean(self):
