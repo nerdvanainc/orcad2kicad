@@ -781,7 +781,8 @@ def run_kicad_project(opts, result, emit):
         from .kicad_cleanup import cleanup_project
         cleanup = cleanup_project(pro)
         result.import_cleanup = cleanup
-        parts = [f"{cleanup['gaps_merged']} hop gaps merged in {cleanup['sheets']} sheets"]
+        parts = [f"{cleanup['gaps_merged']} hop gaps merged in {cleanup['sheets']} sheets",
+                 f"{cleanup['labels_moved']} labels snapped to wire ends"]
         if cleanup['worksheet']:
             parts.append('blank worksheet set')
         emit('import cleanup: ' + ', '.join(parts))

@@ -10,7 +10,9 @@
 - 임포터 결함 후처리(`kicad_cleanup`, 기본 켜짐, `--no-import-cleanup`로 끔): `.DSN`/`.kicad_pro`
   입력에서 나이틀리 임포터가 교차점마다 배선을 끊고 그래픽 선으로 메워 두던 "hop 갭"을 하나의
   배선으로 병합(넷리스트 전후 동일, ERC `unconnected_wire_endpoint`·`endpoint_off_grid` 대폭 감소),
-  OrCAD 타이틀블록과 KiCad 기본 도면 양식이 겹쳐 보이던 문제를 빈 도면 양식(`blank.kicad_wks`)으로 해소
+  OrCAD 타이틀블록과 KiCad 기본 도면 양식이 겹쳐 보이던 문제를 빈 도면 양식(`blank.kicad_wks`)으로 해소,
+  배선 중간에 얹혀 있던 넷 별칭 라벨을 배선의 자유단으로 옮기고 회전을 맞춰(`snap_labels_to_wire_ends`)
+  hop 갭 병합만으로는 남아 있던 `unconnected_wire_endpoint`까지 실측 프로젝트에서 0건까지 마저 해소
 - 버그 수정: 같은 출력 폴더에 `.DSN`을 다시 변환하면 이전 실행의 첫 페이지 파일이 남아 정식 포맷
   재구성이 건너뛰어지고(루트가 나이틀리 포맷으로 남아 KiCad 10.0이 열지 못함) 첫 페이지가 옛 내용으로
   남던 문제 — 포맷 판정을 시트 중 최대 버전으로, 재임포트 전 이전 시트 파일 삭제
