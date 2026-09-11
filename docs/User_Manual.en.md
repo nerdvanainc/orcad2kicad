@@ -1145,6 +1145,10 @@ names keep whatever the nightly importer originally assigned instead of the `P01
 | Backend | The target an agent delegates the actual LLM call to (`none`/`api`/`claude-cli`/`codex-cli`, Chapter 8). |
 | MCP | Model Context Protocol. The standard protocol that lets an external AI tool call this program's functionality as a "tool" (Chapter 9). |
 
+## Notice
+
+This software does not read OrCAD `.DSN` files itself (parsing is done by KiCad's own importer) and requires or includes no Cadence files — no OrCAD installation, license or libraries. Verification is a comparison against your reference netlist, not a guarantee of design correctness; the rights to the designs you convert and the final review of the result remain your responsibility. For trademarks, the reverse-engineering statement and what is sent to an AI backend, see `NOTICE.en.md` in the repository.
+
 ## Contact
 
 Development inquiries: Nerdvana Inc. (www.nerdvana.co.kr)

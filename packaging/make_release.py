@@ -36,7 +36,7 @@ BUILD_CMD = os.path.join(PACKAGING_DIR, 'build_exe.cmd')
 
 # 릴리스 zip 에 들어가는 저장소 루트 문서(고정 순서). packaging/release/ 의 GITHUB_SETUP.md 와
 # WEBSITE_PAGE_ko.md 는 저장소·웹사이트 관리용이라 zip 에는 넣지 않는다.
-DOC_FILES = ('README.md', 'README.en.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md')
+DOC_FILES = ('README.md', 'README.en.md', 'LICENSE', 'NOTICE.md', 'NOTICE.en.md', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md')
 # docs/ 아래에서 그대로 복사할 사용자 문서.
 USER_DOC_FILES = ('Quick_Start.md', 'Quick_Start.en.md', '사용자설명서.md', 'User_Manual.en.md')
 EXE_NAMES = ('orcad2kicad.exe', 'orcad2kicad-cli.exe')

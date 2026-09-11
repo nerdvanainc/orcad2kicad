@@ -61,17 +61,16 @@ are caught automatically, not by hand.
   deterministic pipeline runs the same way with or without an AI backend
   configured.
 
-## Notice regarding OrCAD
+## Notice (summary)
 
-- **This software does not read or convert OrCAD `.DSN` files itself.** Parsing of `.DSN` (a proprietary
-  Cadence binary format) is done entirely by KiCad's own OrCAD importer (kicad-cli, nightly 10.99+) as
-  distributed by the KiCad project; orcad2kicad only runs that kicad-cli and then cleans up and verifies its
-  output (KiCad files). orcad2kicad contains no code that interprets the `.DSN` format.
-- **No OrCAD installation, license, library, DLL, or any other Cadence/OrCAD file is required or
-  included.** The EDIF input mode reads an EDIF 2.0.0 text file (an open standard format) that the user
-  exported from OrCAD themselves.
-- OrCAD, Allegro, and Cadence are trademarks of Cadence Design Systems, Inc.; KiCad is a trademark of the
-  KiCad project. This project is not affiliated with or endorsed by either.
+- **This software does not read or convert OrCAD `.DSN` files itself.** `.DSN` parsing is done by KiCad's own
+  OrCAD importer (kicad-cli nightly); orcad2kicad only cleans up and verifies that output.
+- **No OrCAD installation, license, library or any other Cadence/OrCAD file is required or included.**
+- **Verification is not a guarantee.** It is a comparison against your reference netlist; final design review
+  and the rights to the designs you convert remain your responsibility.
+
+Trademarks, the reverse-engineering statement, what is sent to an AI backend and more: see
+**[NOTICE.en.md](NOTICE.en.md)** (한국어: [NOTICE.md](NOTICE.md)).
 
 ## Requirements
 
@@ -215,6 +214,17 @@ the KiCad nightly build or a 7-Zip console build when you explicitly request
 it, and (b) calls to an AI backend (Claude API, or a local `claude`/`codex`
 CLI) only if you have configured and enabled one for the optional suggestion
 features.
+
+When an AI backend is enabled, parts of your design data — net names, pin names, references,
+footprint names — are sent to the selected service (the Anthropic API, or the service behind
+the local CLI), and that service's terms and privacy policy apply to how it is processed. For
+confidential designs, check your organization's policy before enabling it. With the default
+(no backend) nothing is sent.
+
+KiCad nightly and 7-Zip downloads come from each project's official distribution servers; the
+integrity and safety of what is downloaded is the responsibility of those distributors, and it
+is up to you to confirm that such downloads are permitted by your organization's network and
+software policies.
 
 ## License
 
