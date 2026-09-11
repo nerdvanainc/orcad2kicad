@@ -61,6 +61,18 @@ are caught automatically, not by hand.
   deterministic pipeline runs the same way with or without an AI backend
   configured.
 
+## Notice regarding OrCAD
+
+- **This software does not read or convert OrCAD `.DSN` files itself.** Parsing of `.DSN` (a proprietary
+  Cadence binary format) is done entirely by KiCad's own OrCAD importer (kicad-cli, nightly 10.99+) as
+  distributed by the KiCad project; orcad2kicad only runs that kicad-cli and then cleans up and verifies its
+  output (KiCad files). orcad2kicad contains no code that interprets the `.DSN` format.
+- **No OrCAD installation, license, library, DLL, or any other Cadence/OrCAD file is required or
+  included.** The EDIF input mode reads an EDIF 2.0.0 text file (an open standard format) that the user
+  exported from OrCAD themselves.
+- OrCAD, Allegro, and Cadence are trademarks of Cadence Design Systems, Inc.; KiCad is a trademark of the
+  KiCad project. This project is not affiliated with or endorsed by either.
+
 ## Requirements
 
 - **Windows**: run the packaged `orcad2kicad.exe` / `orcad2kicad-cli.exe`, no

@@ -55,6 +55,18 @@ KiCad 회로도로 옮기는 것에서 그치지 않고, PADS 넷리스트 검�
   제안만 하며 자동 적용되지 않습니다. AI 백엔드를 설정하지 않아도 결정적
   파이프라인은 동일하게 동작합니다.
 
+## 고지: OrCAD 관련
+
+- **이 소프트웨어는 OrCAD `.DSN` 파일을 직접 읽거나 변환하지 않습니다.** `.DSN`(Cadence 고유의 바이너리
+  형식)의 해석은 전적으로 KiCad 프로젝트가 배포하는 KiCad 자체의 OrCAD 임포터(kicad-cli, 나이틀리
+  10.99+)가 수행하며, orcad2kicad는 그 kicad-cli를 실행하고 그 결과(KiCad 파일)를 정리·검증할 뿐입니다.
+  orcad2kicad 안에는 `.DSN` 형식을 해석하는 코드가 들어 있지 않습니다.
+- **OrCAD 제품의 설치, 라이선스, 라이브러리, DLL 등 어떤 Cadence/OrCAD 파일도 요구하거나 포함하지
+  않습니다.** EDIF 입력 모드는 사용자가 OrCAD에서 직접 내보낸 EDIF 2.0.0 텍스트 파일(공개 표준 형식)을
+  읽습니다.
+- OrCAD, Allegro, Cadence는 Cadence Design Systems, Inc.의 상표이며, KiCad는 KiCad 프로젝트의 상표입니다.
+  이 프로젝트는 두 곳 어디와도 제휴·보증 관계가 없습니다.
+
 ## 요구 사항
 
 - **Windows**: 패키징된 `orcad2kicad.exe` / `orcad2kicad-cli.exe`를 그대로
