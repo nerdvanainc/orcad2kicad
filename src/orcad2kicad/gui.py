@@ -423,8 +423,8 @@ class App(tk.Tk if tk is not None else object):
         self.lang_choice = lang if lang in ('ko', 'en') else 'auto'
         _set_language(lang if lang in ('ko', 'en') else detect_default_language())
 
-        self.geometry('1180x900')
-        self.minsize(900, 700)
+        self.geometry('1180x960')
+        self.minsize(900, 720)
         self._apply_theme()
         self._set_window_icon()
         self._build_vars()
@@ -633,7 +633,9 @@ class App(tk.Tk if tk is not None else object):
                                     [(t('filetype_kicad_project'), '*.kicad_pro'), (t('filetype_all'), '*.*')]))
         self._row_entry(f, 4, t('label_netlist_file'), self.var_netlist,
                         lambda: self._pick_file(self.var_netlist,
-                                                [(t('filetype_netlist'), '*.asc'), (t('filetype_all'), '*.*')]))
+                                                [(t('filetype_netlist'),
+                                                  '*.asc *.ipc *.356 *.d356 *.ipc356'),
+                                                 (t('filetype_all'), '*.*')]))
         self._row_entry(f, 5, t('label_board_file'), self.var_board,
                         lambda: self._pick_file(self.var_board,
                                                 [(t('filetype_board'), '*.asc *.kicad_pcb'), (t('filetype_all'), '*.*')]))
@@ -876,18 +878,25 @@ class App(tk.Tk if tk is not None else object):
         self.files_note = ttk.Label(f, text='', foreground='#606060')
         self.files_note.pack(padx=10, pady=(8, 0), anchor='w')
         ttk.Label(f, text=t('label_explain_summary')).pack(anchor='w', padx=6, pady=(6, 0))
-        self.explain_text = tk.Text(f, wrap='word', height=12)
-        self.explain_text.pack(fill='x', expand=False, padx=4, pady=(0, 6))
-        self.file_tree = ttk.Treeview(f, columns=('kind', 'path'), show='headings')
+        bar = ttk.Frame(f)
+        bar.pack(side='bottom', fill='x', padx=4, pady=(0, 6))   # 먼저 bottom 에 붙여 창이 낮아도 잘리지 않게
+        ttk.Button(bar, text=t('btn_open_outdir'), command=self.open_outdir).pack(side='left')
+        ttk.Button(bar, text=t('btn_open_project'), command=self.open_project).pack(side='left', padx=8)
+        self.file_tree = ttk.Treeview(f, columns=('kind', 'path'), show='headings', height=2)
         self.file_tree.heading('kind', text=t('col_kind'))
         self.file_tree.heading('path', text=t('col_path'))
         self.file_tree.column('kind', width=160)
         self.file_tree.column('path', width=860)
-        self.file_tree.pack(fill='both', expand=True, padx=4, pady=4)
-        bar = ttk.Frame(f)
-        bar.pack(fill='x', padx=4, pady=(0, 6))
-        ttk.Button(bar, text=t('btn_open_outdir'), command=self.open_outdir).pack(side='left')
-        ttk.Button(bar, text=t('btn_open_project'), command=self.open_project).pack(side='left', padx=8)
+        self.file_tree.pack(side='bottom', fill='x', padx=4, pady=4)
+        ex = ttk.Frame(f)
+        ex.pack(fill='both', expand=True, padx=4, pady=(0, 6))
+        self.explain_text = tk.Text(ex, wrap='word', height=12, font=LOG_FONT)
+        for tag, cfg in LOG_TAGS.items():             # 로그 탭과 같은 색 구분
+            self.explain_text.tag_configure(tag, **cfg)
+        ex_sb = ttk.Scrollbar(ex, orient='vertical', command=self.explain_text.yview)
+        self.explain_text.configure(yscrollcommand=ex_sb.set)
+        self.explain_text.pack(side='left', fill='both', expand=True)
+        ex_sb.pack(side='right', fill='y')
 
     def _autofill_from_input(self, var):
         """입력 파일(EDIF/.DSN/.kicad_pro) 칸이 실제 파일을 가리키게 되면 **비어 있는** 칸만
@@ -1235,7 +1244,10 @@ class App(tk.Tk if tk is not None else object):
             text = t('explain_failed', error=e)
         if hasattr(self, 'explain_text'):
             self.explain_text.delete('1.0', 'end')
-            self.explain_text.insert('1.0', text)
+            for line in text.splitlines():
+                tag = log_line_tag(line)
+                self.explain_text.insert('end', line + chr(10), tag if tag else ())
+            self.explain_text.see('end')              # 결론 줄이 보이게(내용이 다 들어가면 아무 영향 없음)
         self.append_log('')
         for line in text.splitlines():
             self.append_log(line)

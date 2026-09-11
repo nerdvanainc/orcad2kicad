@@ -93,6 +93,7 @@ def _explain(result, lang='ko'):
     opts = result.options
     mode = getattr(result, 'input_mode', 'edif')
     attention = []          # 결론에 모을 "봐야 할 것"
+    rf = getattr(result, 'ref_format', None) or 'PADS'      # 기준 넷리스트 형식 이름
 
     # 1) 입력
     src = opts.dsn or opts.kicad_project or opts.edf or ''
@@ -115,25 +116,25 @@ def _explain(result, lang='ko'):
     ver = result.verifications or {}
     if mode == 'edif':
         if 'edif' in ver:
-            L.append(('[1] EDIF 연결 정보 vs PADS 넷리스트: ' if ko else '[1] EDIF connectivity vs PADS netlist: ')
+            L.append((f'[1] EDIF 연결 정보 vs 기준 넷리스트({rf}): ' if ko else f'[1] EDIF connectivity vs reference netlist ({rf}): ')
                      + _cmp_text(ver['edif'], 'OrCAD가 저장한 연결 정보가 정답과 같음.',
                                  'the connectivity stored by OrCAD equals the reference.', lang))
-            L.append(('[2] 배선 기하 vs PADS 넷리스트: ' if ko else '[2] wire geometry vs PADS netlist: ')
+            L.append((f'[2] 배선 기하 vs 기준 넷리스트({rf}): ' if ko else f'[2] wire geometry vs reference netlist ({rf}): ')
                      + _cmp_text(ver['geometry'], '그림(배선·핀 위치)만으로 추적한 연결도 정답과 같음.',
                                  'connectivity traced from wire/pin positions alone also equals the reference.', lang))
             for k in ('edif', 'geometry'):
                 if not ver[k].ok:
                     attention.append(f'[{1 if k == "edif" else 2}] FAIL')
         else:
-            L.append('[1][2] ' + ('건너뜀 - PADS 넷리스트(.asc)를 지정하지 않아 정답이 없음. 넷리스트를 주면 OrCAD 연결 정보와 배선 기하를 각각 정답과 대조함.' if ko
-                                  else 'skipped - no PADS netlist (.asc) given, so there is no reference to compare against.'))
+            L.append('[1][2] ' + ('건너뜀 - 기준 넷리스트(PADS .asc 또는 IPC-D-356)를 지정하지 않아 정답이 없음. 넷리스트를 주면 OrCAD 연결 정보와 배선 기하를 각각 정답과 대조함.' if ko
+                                  else 'skipped - no reference netlist (PADS .asc or IPC-D-356) given, so there is nothing to compare against.'))
     else:
         L.append('[1][2] ' + ('건너뜀 - EDIF 입력이 아님(이 경로에서는 [3]이 같은 역할을 함).' if ko
                               else 'skipped - not an EDIF input ([3] plays that role on this path).'))
 
     # 3) [3]
     if 'kicad' in ver:
-        L.append(('[3] KiCad가 뽑은 넷리스트 vs PADS 넷리스트: ' if ko else '[3] kicad-cli netlist vs PADS netlist: ')
+        L.append((f'[3] KiCad가 뽑은 넷리스트 vs 기준 넷리스트({rf}): ' if ko else f'[3] kicad-cli netlist vs reference netlist ({rf}): ')
                  + _cmp_text(ver['kicad'],
                              '변환된 KiCad 회로도의 전기적 연결이 OrCAD 원본(PADS로 내보낸 정답)과 완전히 같음.',
                              'the electrical connectivity of the converted KiCad schematic equals the OrCAD original.', lang))
@@ -148,8 +149,8 @@ def _explain(result, lang='ko'):
         L.append('[3] ' + ('건너뜀 - 회로도를 읽을 수 있는 kicad-cli가 없거나 출력 폴더가 없음.' if ko
                            else 'skipped - no kicad-cli able to read the schematic, or no output directory.'))
     else:
-        L.append('[3] ' + ('건너뜀 - PADS 넷리스트(.asc)가 없음. OrCAD가 내보낸 PADS2000 넷리스트를 주면 KiCad 회로도의 연결을 정답과 대조함.' if ko
-                           else 'skipped - no PADS netlist (.asc). Give the OrCAD-exported PADS2000 netlist to compare the KiCad connectivity.'))
+        L.append('[3] ' + ('건너뜀 - 기준 넷리스트가 없음. OrCAD가 내보낸 PADS2000 넷리스트(.asc)나 보드 툴의 IPC-D-356 넷리스트를 주면 KiCad 회로도의 연결을 정답과 대조함.' if ko
+                           else 'skipped - no reference netlist. Give the OrCAD-exported PADS2000 netlist (.asc) or an IPC-D-356 netlist from the board tool to compare the KiCad connectivity.'))
 
     # 4) 풋프린트 필드 / [4]
     fs = result.footprint_sources or {}
@@ -205,7 +206,18 @@ def _explain(result, lang='ko'):
     erc = result.erc
     if erc:
         by = erc.get('by_type') or {}
-        L.append((f'ERC {erc.get("count", 0)}건 - 유형별:' if ko else f'ERC: {erc.get("count", 0)} violations by type:'))
+        def _level(t):
+            level = ERC_TYPES.get(t, ('check',))[0]
+            return 'fix' if (t == 'footprint_link_issues' and result.board is not None) else level
+        all_info = bool(by) and all(_level(t) == 'info' for t in by)
+        if all_info:
+            # 전부 정보성이면 한 줄로 — 결과 탭에서 결론 줄이 밀려 안 보이던 문제(2026-09-11), 읽는 사람도 유형별 설명이 필요 없다
+            kinds = ', '.join(f'{t} {n}' for t, n in sorted(by.items(), key=lambda kv: -kv[1]))
+            L.append((f'ERC {erc.get("count", 0)}건 - 전부 정보성(조치 불필요): {kinds}. 임포터 특성·KiCad 관례 차이이며 연결과 무관함.' if ko
+                      else f'ERC: {erc.get("count", 0)} violations, all informational (no action): {kinds} - importer artefacts / KiCad conventions, unrelated to connectivity.'))
+            by = {}
+        else:
+            L.append((f'ERC {erc.get("count", 0)}건 - 유형별:' if ko else f'ERC: {erc.get("count", 0)} violations by type:'))
         for t, n in sorted(by.items(), key=lambda kv: -kv[1]):
             level, ko_txt, en_txt = ERC_TYPES.get(t, ('check', '설명 없는 유형 - KiCad ERC 창에서 확인.',
                                                        'no description - check in the KiCad ERC dialog.'))

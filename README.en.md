@@ -17,16 +17,34 @@ orcad2kicad doesn't stop at moving EDIF/DSN data into a KiCad schematic — it
 folds PADS netlist verification into the pipeline so missing or miswired nets
 are caught automatically, not by hand.
 
+## Screenshots
+
+| GUI main window (.DSN input, conversion log) | Results tab — netlist verification PASS |
+|---|---|
+| ![orcad2kicad GUI main window converting an OrCAD .DSN file to KiCad](docs/images/gui-main-en.png) | ![orcad2kicad results tab — kicad-cli netlist vs reference netlist PASS, conclusion: no problems](docs/images/summary-en.png) |
+
+![Converted schematic opened in KiCad 10](docs/images/kicad-result.png)
+
+*The converted schematic opened in KiCad 10.0 (part of one page).*
+
+> The example circuit in these screenshots is a conversion of the publicly released
+> Raspberry Pi Compute Module IO Board V3 design files (`RPI-CMIO-V3_0-PUBLIC.DSN`,
+> © 2015 Raspberry Pi (Trading) Ltd). The design files are not included in this
+> repository. The Raspberry Pi Foundation and Raspberry Pi (Trading) Ltd are not
+> affiliated with and do not endorse this tool.
+
 ## What it does
 
 - **OrCAD → KiCad conversion**: reads an OrCAD Capture `.DSN` file or an
   EDIF 2.0.0 export and produces a stable KiCad 10.0 project — a root sheet
   plus sub-sheets (`.kicad_sym` / `.kicad_sch` / `.kicad_pro`).
-- **PADS netlist verification**: treats a PADS-exported `.asc` netlist as
-  ground truth and cross-checks the converted schematic's connectivity net by
-  net — with an EDIF input three independent ways (connectivity join, wire
-  geometry, kicad-cli-exported netlist: [1][2][3]), with a `.DSN` input via
-  the kicad-cli-exported netlist ([3]).
+- **Netlist verification**: treats a PADS-exported `.asc` netlist, or an
+  IPC-D-356/IPC-D-356A netlist exported from Cadence Allegro and other tools
+  (both auto-detected from extension/content), as ground truth and
+  cross-checks the converted schematic's connectivity net by net — with an
+  EDIF input three independent ways (connectivity join, wire geometry,
+  kicad-cli-exported netlist: [1][2][3]), with a `.DSN` input via the
+  kicad-cli-exported netlist ([3]).
 - **PADS board link**: given an existing PADS Layout ASCII board file,
   extracts its footprint library into `PADS.pretty`, fills in footprint
   fields on the schematic, and reports reference/pin differences between

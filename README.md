@@ -16,15 +16,31 @@ OrCAD에서 KiCad로 마이그레이션하려는 팀이 겪는 가장 큰 문제
 KiCad 회로도로 옮기는 것에서 그치지 않고, PADS 넷리스트 검증까지 파이프라인에
 포함시켜 넷이 빠지거나 잘못 연결되지 않았는지 자동으로 대조합니다.
 
+## 스크린샷
+
+| GUI 메인 화면 (.DSN 입력, 변환 로그) | 결과 탭 요약 — 넷리스트 검증 PASS |
+|---|---|
+| ![orcad2kicad GUI 메인 화면 — OrCAD .DSN 파일을 KiCad로 변환하는 로그](docs/images/gui-main.png) | ![orcad2kicad 결과 탭 — kicad-cli 넷리스트 vs 기준 넷리스트 PASS, 결론: 문제 없음](docs/images/summary.png) |
+
+![orcad2kicad로 변환한 회로도를 KiCad 10에서 연 화면](docs/images/kicad-result.png)
+
+*KiCad 10.0에서 연 변환 결과 (회로 영역 일부).*
+
+> 스크린샷의 예시 회로는 Raspberry Pi Compute Module IO Board V3 공개 설계 파일
+> (`RPI-CMIO-V3_0-PUBLIC.DSN`, © 2015 Raspberry Pi (Trading) Ltd)을 변환한 것입니다.
+> 설계 파일은 이 저장소에 포함되어 있지 않으며, Raspberry Pi 재단 및 Raspberry Pi
+> (Trading) Ltd는 이 도구와 무관하고 이 도구를 보증하지 않습니다.
+
 ## 무엇을 하는 도구인가
 
 - **OrCAD → KiCad 변환**: OrCAD Capture의 `.DSN` 파일 또는 EDIF 2.0.0 익스포트를
   읽어, 정식(stable) KiCad 10.0 프로젝트 — 루트 시트와 서브시트로 구성된
   `.kicad_sym` / `.kicad_sch` / `.kicad_pro` — 를 생성합니다.
-- **PADS 넷리스트 검증**: PADS에서 내보낸 `.asc` 넷리스트를 기준 정답으로 삼아,
-  변환된 회로도의 넷 연결을 넷 단위로 대조합니다 — EDIF 입력이면 연결 정보
-  조인·배선 지오메트리·kicad-cli 넷리스트 세 가지 독립 검증([1][2][3]), `.DSN`
-  입력이면 kicad-cli 넷리스트 검증([3]).
+- **넷리스트 검증**: PADS에서 내보낸 `.asc` 넷리스트, 또는 Cadence Allegro 등에서
+  내보낸 IPC-D-356/IPC-D-356A 넷리스트(둘 다 확장자·내용으로 자동 판별)를 기준
+  정답으로 삼아, 변환된 회로도의 넷 연결을 넷 단위로 대조합니다 — EDIF 입력이면
+  연결 정보 조인·배선 지오메트리·kicad-cli 넷리스트 세 가지 독립 검증([1][2][3]),
+  `.DSN` 입력이면 kicad-cli 넷리스트 검증([3]).
 - **PADS 보드 연동**: 기존 PADS Layout ASCII 보드 파일을 함께 주면, 보드에 쓰인
   풋프린트 라이브러리를 `PADS.pretty`로 추출하고, 회로도의 풋프린트 필드를
   채우고, 보드와 회로도 사이의 레퍼런스·핀 차이를 리포트로 보여줍니다([4]) —

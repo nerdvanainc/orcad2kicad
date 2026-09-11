@@ -17,7 +17,7 @@ import os
 from dataclasses import dataclass, field, asdict
 
 from .edif_reader import load_edif
-from .pads_netlist import load_pads_netlist
+from .pads_netlist import load_reference_netlist
 from .verify import edif_netlist, compare_netlists, format_report
 from .geometry import derive_nets
 
@@ -71,7 +71,8 @@ class PipelineResult:
     import_cleanup: dict = None          # kicad_cleanup.cleanup_project() 의 반환값(적용했으면)
     exit_code: int = 0
     error: str = None                    # 입력/출력 오류 메시지 (exit 2, 그 시점에 중단)
-    ref_nets: dict = None                # 기준 PADS 넷리스트({넷: {REF.PIN}}) — 재실행/비교용
+    ref_nets: dict = None                # 기준 넷리스트({넷: {REF.PIN}}) — 재실행/비교용
+    ref_format: str = None               # 기준 넷리스트 형식 표시 이름('PADS ASCII' | 'IPC-D-356')
     footprint_sources: dict = field(default_factory=dict)  # ref -> 'board'|'netlist'|'' (kicad-project/dsn 모드)
 
 
@@ -212,7 +213,7 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
     # ---- 1) EDIF 읽기 + (선택) 기준 넷리스트 ----
     try:
         design = load_edif(opts.edf)
-        ref = load_pads_netlist(opts.netlist) if opts.netlist else None
+        ref = load_reference_netlist(opts.netlist) if opts.netlist else None
     except OSError as e:
         result.error = f'cannot read input: {e}'
         result.exit_code = 2
@@ -221,6 +222,8 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
     result.issues = design.issues
     if ref is not None:
         result.ref_nets = ref.nets
+        result.ref_format = ref.source_format
+        emit(f'reference netlist: {ref.source_format} ({len(ref.nets)} nets)')
 
     # ---- 2) 1·2차 검증 (EDIF 조인 / 지오메트리 vs PADS) ----
     if ref is not None:
@@ -228,10 +231,10 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
         cmp2 = compare_netlists(derive_nets(design), ref.nets)
         result.verifications['edif'] = cmp1
         result.verifications['geometry'] = cmp2
-        emit('[1] EDIF joined vs PADS')
+        emit(f'[1] EDIF joined vs reference ({result.ref_format or "PADS"})')
         emit(format_report(cmp1))
         emit('')
-        emit('[2] geometry vs PADS')
+        emit(f'[2] geometry vs reference ({result.ref_format or "PADS"})')
         emit(format_report(cmp2))
         result.exit_code = 0 if cmp1.ok and cmp2.ok else 1
 
@@ -361,7 +364,7 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
                 result.verifications['kicad'] = cmp3
                 result.files['netlist_txt'] = os.path.join(opts.outdir, 'kicad_netlist.txt')
                 emit('')
-                emit('[3] kicad-cli netlist vs PADS')
+                emit(f'[3] kicad-cli netlist vs reference ({result.ref_format or "PADS"})')
                 emit(format_report(cmp3))
                 if not cmp3.ok:
                     result.exit_code = 1
@@ -591,13 +594,15 @@ def run_kicad_project(opts, result, emit):
         emit(f'outdir: {opts.outdir} (default: next to the input file)')
     try:
         os.makedirs(opts.outdir, exist_ok=True)
-        ref = load_pads_netlist(opts.netlist) if opts.netlist else None
+        ref = load_reference_netlist(opts.netlist) if opts.netlist else None
     except OSError as e:
         result.error = f'cannot read input: {e}'
         result.exit_code = 2
         return result
     if ref is not None:
         result.ref_nets = ref.nets
+        result.ref_format = ref.source_format
+        emit(f'reference netlist: {ref.source_format} ({len(ref.nets)} nets)')
 
     # ---- 1) 입력 준비(.DSN 임포트 또는 프로젝트 복사) ----
     board_from_import = None
@@ -812,7 +817,7 @@ def run_kicad_project(opts, result, emit):
                 result.verifications['kicad'] = cmp3
                 result.files['netlist_txt'] = os.path.join(opts.outdir, 'kicad_netlist.txt')
                 emit('')
-                emit('[3] kicad-cli netlist vs PADS')
+                emit(f'[3] kicad-cli netlist vs reference ({result.ref_format or "PADS"})')
                 emit(format_report(cmp3))
                 if not cmp3.ok:
                     result.exit_code = 1
@@ -944,6 +949,7 @@ def result_to_json(result: PipelineResult) -> dict:
             'footprint_sources': dict(result.footprint_sources),
             'kicad_cli': result.kicad_cli,
             'net_names': result.net_names,
+            'ref_format': result.ref_format,
             'import_cleanup': dict(result.import_cleanup) if result.import_cleanup else None,
             'exit_code': result.exit_code,
             'error': result.error}

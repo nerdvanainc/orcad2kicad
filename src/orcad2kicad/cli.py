@@ -6,7 +6,7 @@
 `--dsn FILE`(OrCAD .DSN — kicad-cli 나이틀리의 네이티브 임포터로 변환 후 진행).
 
 usage: python -m orcad2kicad.cli [IN.EDF | --kicad-project PRO | --dsn FILE]
-                                  [--netlist X.asc] [--report out.txt] [--issues] [--explain]
+                                  [--netlist X.asc|X.ipc] [--report out.txt] [--issues] [--explain]
                                   [-o OUTDIR] [--project NAME] [--kicad-cli PATH] [--pdf]
                                   [--board FILE] [--net-names {kicad,keep}] [--strict-board]
                                   [--add-board-part REF] [--footprint-choice REF=board|orcad]
@@ -29,15 +29,16 @@ from .pipeline import (PipelineOptions, Resolutions, run_pipeline, format_result
                        summary)   # noqa: F401 (summary: 호환 재노출)
 from .branding import CLI_BANNER, CONTACT_EN, GITHUB_URL, VERSION
 from .edif_reader import load_edif
-from .pads_netlist import load_pads_netlist
+from .pads_netlist import load_reference_netlist
 from .verify import edif_netlist, compare_netlists
 from .geometry import derive_nets
 
 
-def run_verification(edf_path, asc_path):
-    """(호환용) EDIF/PADS 를 읽어 1·2차 비교 결과를 돌려준다. 새 코드는 run_pipeline 을 쓸 것."""
+def run_verification(edf_path, netlist_path):
+    """(호환용) EDIF/기준 넷리스트(PADS ASCII 또는 IPC-D-356)를 읽어 1·2차 비교 결과를
+    돌려준다. 새 코드는 run_pipeline 을 쓸 것."""
     design = load_edif(edf_path)
-    ref = load_pads_netlist(asc_path)
+    ref = load_reference_netlist(netlist_path)
     cmp1 = compare_netlists(edif_netlist(design), ref.nets)
     cmp2 = compare_netlists(derive_nets(design), ref.nets)
     return design, ref, cmp1, cmp2
@@ -110,7 +111,10 @@ def main(argv=None):
     ap.add_argument('--dsn', metavar='FILE',
                      help='OrCAD .DSN input; imported with kicad-cli (KiCad 10.99+ nightly) '
                           'and then handled like --kicad-project')
-    ap.add_argument('--netlist', help='PADS2000 .asc netlist exported from OrCAD (reference)')
+    ap.add_argument('--netlist', help='reference netlist: PADS2000 .asc exported from OrCAD, or '
+                                      'an IPC-D-356/IPC-D-356A netlist (.ipc/.356/.d356, e.g. from '
+                                      'Cadence Allegro File > Export > IPC 356) -- format is '
+                                      'auto-detected')
     ap.add_argument('--report', help='write the report to this file as well')
     ap.add_argument('--issues', action='store_true', help='print all issues')
     ap.add_argument('--explain', action='store_true',

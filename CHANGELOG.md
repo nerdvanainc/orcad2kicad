@@ -2,6 +2,15 @@
 
 이 파일은 orcad2kicad의 릴리스별 변경 사항을 기록합니다.
 
+## 1.0.2 (unreleased)
+
+- 기준 넷리스트(`--netlist`/GUI "PADS 넷리스트(.asc) 또는 IPC-D-356"/MCP `convert`·`verify`·
+  `board_diff` 의 `netlist`)가 PADS2000 ASCII `.asc` 뿐 아니라 Cadence Allegro 등에서 내보낸
+  IPC-D-356/IPC-D-356A 넷리스트(`.ipc`/`.356`/`.d356`, 확장자 없거나 다른 경우 내용으로도
+  판별)도 받는다(`src/orcad2kicad/ipc356.py`, `pads_netlist.load_reference_netlist`). [3]
+  검증 등 기존 소비 코드는 변경 없이 그대로 동작 — 실측(Raspberry Pi CMIO 보드, IPC-D-356
+  152개 다핀 넷)으로 확인했다.
+
 ## 1.0.1 (2026-09-11)
 
 나이틀리 OrCAD 임포터 결과의 결함 정리와 GUI 사용성 개선, 그리고 같은 폴더에 다시 변환할 때의
@@ -21,6 +30,12 @@
   종료 코드가 0이어도 확인할 항목이 있으면 "확인할 항목 있음"으로 표시, 보드 차이 탭에 선택한 행의
   상세 창, 글꼴·여백 테마(맑은 고딕/Segoe UI 10pt), 앱·exe 아이콘
 - 결과 요약 끝의 회사 문의 문구 제거
+- 검증 표기: 로그·요약·검증 탭의 "vs PADS" 를 "vs 기준 넷리스트(형식)" 로 바꿔 IPC-D-356 기준일 때도 맞게
+  표시(`PipelineResult.ref_format`, JSON `ref_format`).
+- 결과 탭: 요약 설명이 남는 공간을 다 쓰고 스크롤바가 붙으며 결론 줄이 보이도록 정렬. ERC 가 전부 정보성이면
+  유형별 줄 대신 한 줄로 요약. 기본 창 높이 960.
+- 설명서: 결과는 `.kicad_pro` 로 열 것(하위 시트 파일을 단독으로 열면 KiCad 기본 도면 양식이 겹쳐 보임) 안내.
+
 
 ## 1.0.0 (2026-09-09)
 

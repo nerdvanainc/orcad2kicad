@@ -80,8 +80,10 @@ def log(msg):
 
 _EDF_DESC = ('Absolute path to the OrCAD Capture EDIF 2.0.0 export (.EDF). One of edf, dsn or '
             'kicad_project is required for convert (exactly one).')
-_NETLIST_DESC = ('Optional absolute path to the reference PADS2000 netlist (.asc). '
-                 'When given, net membership (REF.PIN sets) is compared against it.')
+_NETLIST_DESC = ('Optional absolute path to the reference netlist: PADS2000 ASCII (.asc) or an '
+                 'IPC-D-356/IPC-D-356A netlist (.ipc/.356/.d356, e.g. exported from Cadence '
+                 'Allegro via File > Export > IPC 356); format is auto-detected. When given, net '
+                 'membership (REF.PIN sets) is compared against it.')
 
 TOOLS = [
     {
@@ -160,7 +162,7 @@ TOOLS = [
             'type': 'object',
             'properties': {
                 'edf': {'type': 'string', 'description': _EDF_DESC},
-                'netlist': {'type': 'string', 'description': 'Absolute path to the reference PADS2000 netlist (.asc).'},
+                'netlist': {'type': 'string', 'description': _NETLIST_DESC},
             },
             'required': ['edf', 'netlist'],
         },
@@ -456,7 +458,7 @@ class Server:
 
     def _tool_board_diff(self, args):
         from .edif_reader import load_edif
-        from .pads_netlist import load_pads_netlist
+        from .pads_netlist import load_reference_netlist
         from .verify import edif_netlist
         from .kicad_board import compare_board, format_board_diff, load_board, import_pads_board
         edf = _arg_str(args, 'edf', required=True)
@@ -466,7 +468,7 @@ class Server:
         log(f'board_diff: {os.path.basename(edf)} vs {os.path.basename(board_path)}')
         try:
             design = load_edif(edf)
-            ref_nets = load_pads_netlist(netlist).nets if netlist else None
+            ref_nets = load_reference_netlist(netlist).nets if netlist else None
             if board_path.lower().endswith('.asc'):
                 if not cli_path:
                     raise ToolError('board_diff: kicad-cli is required to import a PADS .asc board')
