@@ -2,7 +2,7 @@
 
 이 파일은 orcad2kicad의 릴리스별 변경 사항을 기록합니다.
 
-## 1.0.2 (unreleased)
+## 1.0.2 (2026-09-11)
 
 - 기준 넷리스트(`--netlist`/GUI "PADS 넷리스트(.asc) 또는 IPC-D-356"/MCP `convert`·`verify`·
   `board_diff` 의 `netlist`)가 PADS2000 ASCII `.asc` 뿐 아니라 Cadence Allegro 등에서 내보낸

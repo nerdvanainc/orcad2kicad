@@ -76,7 +76,7 @@ KiCad 회로도로 옮기는 것에서 그치지 않고, PADS 넷리스트 검�
   받을 수 있습니다. 다운로드 후 무결성을 확인하십시오.
 
   ```powershell
-  Get-FileHash orcad2kicad-1.0.1-win64.zip -Algorithm SHA256
+  Get-FileHash orcad2kicad-1.0.2-win64.zip -Algorithm SHA256
   ```
 
   출력된 해시 값을 `SHA256SUMS.txt`에 적힌 값과 비교해서 일치하는지
