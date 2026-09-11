@@ -1,5 +1,7 @@
 # orcad2kicad Notice
 
+Made by / copyright: © 2026 Nerdvana Inc., https://www.nerdvana.co.kr
+
 This document collects the notices about the scope of use, trademarks and responsibility for orcad2kicad. The license itself is [LICENSE](LICENSE) (MIT).
 
 ## OrCAD, trademarks, and scope of responsibility

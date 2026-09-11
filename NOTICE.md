@@ -1,5 +1,7 @@
 # orcad2kicad 고지 (Notice)
 
+제작·저작권: © 2026 Nerdvana Inc. (㈜너드바나), https://www.nerdvana.co.kr
+
 이 문서는 orcad2kicad의 사용 범위, 상표, 책임에 관한 고지입니다. 라이선스 본문은 [LICENSE](LICENSE)(MIT)를 참조하십시오.
 
 ## OrCAD·상표·책임 범위

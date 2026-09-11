@@ -2,10 +2,12 @@
 
 한국어(이 페이지) · English: [README.en.md](README.en.md)
 
+**제작·유지보수: [Nerdvana Inc.](https://www.nerdvana.co.kr) (㈜너드바나)** · 라이선스 MIT · [고지](NOTICE.md)
+
 **orcad2kicad**는 OrCAD Capture 회로도(EDIF 2.0.0 익스포트 또는 OrCAD 네이티브
 `.DSN` 파일)를 정식(stable) KiCad 10.0 프로젝트로 변환하고, PADS에서 내보낸
 기준 넷리스트와 대조하여 넷이 빠지거나 잘못 연결되지 않았는지 검증하는
-오픈소스 도구입니다. 제작: [Nerdvana Inc.](https://www.nerdvana.co.kr)
+오픈소스 도구입니다.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests](https://github.com/nerdvanainc/orcad2kicad/actions/workflows/tests.yml/badge.svg)](https://github.com/nerdvanainc/orcad2kicad/actions/workflows/tests.yml)

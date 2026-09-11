@@ -2,10 +2,12 @@
 
 한국어 README: [README.md](README.md) · English (this page)
 
+**Made and maintained by [Nerdvana Inc.](https://www.nerdvana.co.kr)** · MIT license · [Notice](NOTICE.en.md)
+
 **orcad2kicad** converts OrCAD Capture schematics — an EDIF 2.0.0 export or a
 native OrCAD `.DSN` file — into a real, stable KiCad 10.0 project, and
 verifies the result against a PADS-exported reference netlist so nets aren't
-silently dropped or miswired. Built by [Nerdvana Inc.](https://www.nerdvana.co.kr)
+silently dropped or miswired.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests](https://github.com/nerdvanainc/orcad2kicad/actions/workflows/tests.yml/badge.svg)](https://github.com/nerdvanainc/orcad2kicad/actions/workflows/tests.yml)
