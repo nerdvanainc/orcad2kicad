@@ -579,6 +579,26 @@ grayed out (exactly one of the three is passed to the pipeline — see Chapters 
 | PDF output | If checked, also produces a schematic PDF via kicad-cli. |
 | Board diff strict | If checked, treats the run as a failure (exit code 1) when [4] board vs. schematic comparison fails or references differ. Off by default, showing information only and finishing as a success. |
 
+**Drag and drop files/folders (Windows only)**: drop files or folders from Explorer onto the main
+window and they are placed into the matching fields by extension (a gray hint at the bottom of the
+Input frame appears when drop is available; on other platforms use the Browse buttons).
+
+- Classification: `.EDF`/`.edif` -> EDIF, `.DSN` -> `.DSN`, `.kicad_pro` -> KiCad project, `.asc` ->
+  PADS netlist (`*PADS2000*`) or PADS board (`!PADS-POWERPCB`) by header (unknown `.asc` is
+  ignored), `.ipc`/`.356`/`.d356`/`.ipc356` -> netlist, `.kicad_pcb` -> board. Anything else
+  (`.opj`, `.png`, `.pdf`, ...) is ignored and reported in the log.
+- A dropped folder contributes **only the files directly inside it** (no subfolders, so an earlier
+  output folder's `.kicad_pro` is never picked up). Files and folders may be mixed.
+- If several files of one kind are dropped, the one named like the input file wins (exact stem >
+  stem prefix > first by name); unused candidates are listed in the log.
+- If both `.EDF` and `.DSN` are present, **EDIF mode wins** (both fields are filled, input type is
+  EDIF, one log line says so).
+- A drop containing an input file (EDIF/`.DSN`/`.kicad_pro`) replaces the netlist and board fields
+  with what was dropped (cleared if absent, then auto-suggested from `.asc` files next to the
+  input). If the new input lives in a different folder than before, output folder and project name
+  are re-suggested; in the same folder your edited values are kept. Dropping only a netlist/board
+  changes just those fields. Drops are ignored while a run is in progress.
+
 Clicking "Run conversion" runs the pipeline in a separate thread (the window doesn't freeze), and
 progress logs stream live into the "Log" tab. When it finishes, the status bar shows one of `Done
 (all verification PASS)` / `Done (verification FAIL present)` / `Error (I/O or kicad-cli)`.

@@ -173,6 +173,91 @@ def suggest_inputs(input_path):
     return out
 
 
+def _pick_by_name(cands, primary_stem):
+    """같은 종류 후보 중 하나 고르기: 기준 이름과 같은 것 > 그 이름으로 시작하는 것 > 정렬 첫 번째."""
+    cands = sorted(cands, key=lambda p: (os.path.basename(p).lower(), p))
+    if primary_stem:
+        low = primary_stem.lower()
+        exact = [p for p in cands if os.path.splitext(os.path.basename(p))[0].lower() == low]
+        prefix = [p for p in cands if os.path.basename(p).lower().startswith(low)]
+        cands = exact or prefix or cands
+    return cands[0]
+
+
+def classify_dropped(paths):
+    """창에 끌어다 놓은 파일/폴더 목록 -> 입력 칸별 배정.
+
+    반환: {'edf','dsn','kicad_project','netlist','board'(경로 또는 None), 'mode'('edif'|'dsn'|
+    'kicad_project'|None), 'ignored'(무시한 경로 목록), 'notes'(로그용 짧은 영문 문장 목록)}.
+    폴더는 **바로 아래 파일만**(재귀 없음) 펼친다 — 이전 변환 출력 폴더(`KICAD\\*.kicad_pro`)를
+    잘못 집지 않기 위해서다. 확장자(대소문자 무시)로 분류하고 `.asc` 만 머리글로 넷리스트/보드를
+    구분한다. 같은 종류가 여럿이면 주 입력과 이름이 같은 것 > 그 이름으로 시작하는 것 > 정렬 첫
+    번째를 고르고 나머지는 notes 에 적는다. 모드는 EDIF > DSN > KiCad 프로젝트 순으로 우선한다."""
+    from .pads_netlist import _IPC356_EXTS
+    files = []
+    notes = []
+    for p in paths or []:
+        p = os.path.abspath(str(p))
+        if os.path.isdir(p):
+            try:
+                for fn in sorted(os.listdir(p)):
+                    fp = os.path.join(p, fn)
+                    if os.path.isfile(fp):
+                        files.append(fp)
+            except OSError:
+                notes.append('cannot read folder: ' + p)
+        elif os.path.isfile(p):
+            files.append(p)
+        else:
+            notes.append('not found: ' + p)
+    files = list(dict.fromkeys(files))                 # 중복 제거(순서 유지)
+    cands = {k: [] for k in ('edf', 'dsn', 'kicad_project', 'netlist', 'board')}
+    ignored = []
+    for fp in files:
+        ext = os.path.splitext(fp)[1].lower()
+        if ext in ('.edf', '.edif'):
+            cands['edf'].append(fp)
+        elif ext == '.dsn':
+            cands['dsn'].append(fp)
+        elif ext == '.kicad_pro':
+            cands['kicad_project'].append(fp)
+        elif ext == '.asc':
+            kind = _asc_kind(fp)
+            if kind:
+                cands[kind].append(fp)
+            else:
+                ignored.append(fp)
+                notes.append('unknown .asc header: ' + os.path.basename(fp))
+        elif ext in _IPC356_EXTS:
+            cands['netlist'].append(fp)
+        elif ext == '.kicad_pcb':
+            cands['board'].append(fp)
+        else:
+            ignored.append(fp)
+    out = {k: None for k in cands}
+    mode = next((m for m, k in (('edif', 'edf'), ('dsn', 'dsn'),
+                                ('kicad_project', 'kicad_project')) if cands[k]), None)
+    if cands['edf'] and cands['dsn']:
+        notes.append('both EDIF and DSN dropped: EDIF mode used')
+    primary_stem = None
+    for kind in ('edf', 'dsn', 'kicad_project', 'netlist', 'board'):
+        if not cands[kind]:
+            continue
+        pick = _pick_by_name(cands[kind], primary_stem)
+        out[kind] = pick
+        if kind == {'edif': 'edf', 'dsn': 'dsn', 'kicad_project': 'kicad_project'}.get(mode):
+            primary_stem = os.path.splitext(os.path.basename(pick))[0]
+        rest = [os.path.basename(p) for p in sorted(cands[kind]) if p != pick]
+        if rest:
+            notes.append(f'{kind}: using {os.path.basename(pick)}, not used: ' + ', '.join(rest))
+    if ignored:
+        names = [os.path.basename(p) for p in ignored]
+        shown = ', '.join(names[:5]) + (', ...' if len(names) > 5 else '')
+        notes.append(f'ignored {len(names)} files: {shown}')
+    out.update(mode=mode, ignored=ignored, notes=notes)
+    return out
+
+
 def input_mode(opts):
     """옵션의 입력 종류 -> ('edif'|'kicad-project'|'dsn', 오류 메시지 또는 None)."""
     given = [name for name, val in (('edif', opts.edf), ('kicad-project', opts.kicad_project),
@@ -244,30 +329,13 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
     # ---- 3) KiCad 출력 (+ 보드 임포트) ----
     from .kicad_writer import write_project
     from .kicad_netlist import find_kicad_cli, run_erc, export_pdf, verify_with_kicad
-    # cli_path 는 --board .asc 임포트에도 필요하므로 write_project 보다 먼저 계산한다.
     cli_path = find_kicad_cli(opts.kicad_cli)
     result.kicad_cli = cli_path
-    board = None
-    if opts.board:
-        from .kicad_board import import_pads_board, load_board
-        try:
-            if opts.board.lower().endswith('.asc'):
-                if not cli_path:
-                    emit('board: kicad-cli required for .asc import (skipped)')
-                else:
-                    imp_dir = os.path.join(opts.outdir, 'pads_import')
-                    os.makedirs(imp_dir, exist_ok=True)
-                    pcb = os.path.join(imp_dir, 'board.kicad_pcb')
-                    rep = import_pads_board(cli_path, opts.board, pcb, os.path.join(imp_dir, 'board_import.json'))
-                    emit(f'board import: footprints={rep["statistics"]["footprints"]} '
-                         f'tracks={rep["statistics"]["tracks"]} warnings={len(rep["warnings"])}')
-                    board = load_board(pcb)
-            else:
-                board = load_board(opts.board)
-        except (OSError, RuntimeError) as e:
-            result.error = f'cannot read board: {e}'
-            result.exit_code = 2
-            return result
+    # 보드(.asc) 임포트는 kicad-project/dsn 모드와 같은 규칙: 정식 kicad-cli 우선. kicad-cli 칸이
+    # 나이틀리(GUI 포터블 준비가 채움)여도 보드는 정식판이 여는 버전으로 나와야 한다.
+    board = _load_board_for_view(opts, result, emit, None)
+    if result.error:
+        return result
     result.board = board
 
     fp_map = None

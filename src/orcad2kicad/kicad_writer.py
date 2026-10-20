@@ -795,6 +795,7 @@ def _page_text(design, page, symset, project, root_uuid, sheet_uuid, pwr_counter
     # OrCAD/PADS 이름과 같아지게 한다. 그 외(이름이 두 페이지 이상에 나타남/전원 넷과 충돌)는
     # 기존처럼 로컬 label 로 남기고 이슈를 남긴다.
     net_wires = {n.edif_id: n.wires for n in page.nets}
+    net_name_by_id = {n.edif_id: n.name for n in page.nets}
     for i, lb in enumerate(page.labels):
         q = snap_to_wires(lb.pos, net_wires.get(lb.net_id, [])) or snap_to_wires(lb.pos, page.wires)
         if q is None:
@@ -805,12 +806,18 @@ def _page_text(design, page, symset, project, root_uuid, sheet_uuid, pwr_counter
         # 라벨 텍스트 방향은 EDIF 표시 그대로(절대). EDIF alias 표시에는 justify 가 없는 것이
         # 보통이라(샘플 40개 전부) 그 경우 KiCad 관례인 "와이어 위(left bottom)"를 기본으로 쓴다.
         lb_ang, lb_h, lb_v = edif_text_style(lb.rotation, lb.justify, default=('left', 'bottom'))
-        collision = _collision_kind(lb.text, page.name, 'label', name_kinds) if net_names == 'keep' else True
+        # 넷 이름과 다른 텍스트의 alias(NET_NAME_OVERRIDE, 예: 넷 ETH_NRST 에 'nRST')는 항상 로컬
+        # label — global_label 로 쓰면 한 넷에 전역 이름이 둘이 되어 KiCad 넷 이름이 바뀔 수 있다.
+        override = lb.text != net_name_by_id.get(lb.net_id, lb.text)
+        if net_names == 'keep' and not override:
+            collision = _collision_kind(lb.text, page.name, 'label', name_kinds)
+        else:
+            collision = 'override' if override else True
         if not collision:
             body.append(f'(global_label {qstr(lb.text)} (shape passive) (at {fnum(x)} {fnum(y)} {lb_ang}) '
                         f'{_effects(justify="left")} (uuid {qstr(uid)}))')
         else:
-            if net_names == 'keep':
+            if net_names == 'keep' and not override:
                 issues.append(f'page {page.name}: net name {lb.text} collides with {collision}; kept local')
             body.append(f'(label {qstr(lb.text)} (at {fnum(x)} {fnum(y)} {lb_ang}) '
                         f'{_effects(justify=justify_str(lb_h, lb_v))} (uuid {qstr(uid)}))')

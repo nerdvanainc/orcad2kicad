@@ -207,9 +207,11 @@ def import_kicad_project(cli, inputs, out_stem):
     회로도(.DSN)와 (선택) 보드(.asc)를 한 번에 임포트해 `<out_stem>.kicad_pro` 프로젝트를 만든다.
     이 명령은 리포트 파일 옵션이 없어 진행 내용이 stdout 으로만 나오므로 그대로 돌려준다
     (로캘에 따라 비ASCII 가 섞일 수 있어 파일로만 남기고 콘솔에는 요약만 찍는다)."""
-    args = [cli, 'import', '-o', out_stem] + list(inputs)
-    rc, out = _probe(args, timeout=600)
+    # '-o' 에 확장자까지 붙여 넘긴다. 이름에 점이 있으면(예: 'ABC_1.3') kicad-cli 가 '.3' 을
+    # 확장자로 잘라 'ABC_1.kicad_pro' 를 만든다(10.99 실측). '.kicad_pro' 를 붙이면 그것만 뗀다.
     pro = out_stem + '.kicad_pro'
+    args = [cli, 'import', '-o', pro] + list(inputs)
+    rc, out = _probe(args, timeout=600)
     if not os.path.isfile(pro):
         raise RuntimeError(f'kicad-cli import failed ({rc}): {out.strip()[:800]}')
     return pro, out

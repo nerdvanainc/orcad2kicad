@@ -480,8 +480,10 @@ def _read_net(node, design, page):
     name = edif_name(nd)
     label_positions = []
     label_styles = []                      # label_positions 와 같은 순서의 (justify, orientation)
-    if isinstance(nd, list) and head(nd) == 'name':
-        for disp in children(nd, 'display'):
+    label_texts = []                       # label_positions 와 같은 순서의 표시 텍스트
+
+    def add_alias_displays(container, text):
+        for disp in children(container, 'display'):
             o = child(disp, 'origin')
             if o is not None:
                 label_positions.append(_pt(child(o, 'pt')))
@@ -489,6 +491,24 @@ def _read_net(node, design, page):
                 r = child(disp, 'orientation')
                 label_styles.append((str(j[1]) if j is not None else '',
                                      str(r[1]) if r is not None else 'R0'))
+                label_texts.append(text)
+
+    # alias 표시 위치: (name ID (display …)) 또는 (rename (name ID (display …)) "표시 이름")
+    name_node = nd
+    if isinstance(nd, list) and head(nd) == 'rename' and isinstance(nd[1], list):
+        name_node = nd[1]
+    if isinstance(name_node, list) and head(name_node) == 'name':
+        add_alias_displays(name_node, name)
+    # (property NET_NAME_OVERRIDE (string (stringDisplay "표시" (display ALIAS …)))) — 넷 이름과
+    # 다른 표시 이름의 alias. 프로퍼티 이름이 (rename NET_NAME_OVERRIDE_0 "NET_NAME_OVERRIDE") 일
+    # 수도 있다. 이 라벨들도 끊어진 와이어 조각을 같은 넷으로 묶는다.
+    for prop in children(node, 'property'):
+        if len(prop) < 2 or edif_name(prop[1]) != 'NET_NAME_OVERRIDE':
+            continue
+        sv = child(prop, 'string')
+        sd = child(sv, 'stringDisplay') if sv is not None else None
+        if sd is not None and len(sd) > 1:
+            add_alias_displays(sd, str(sd[1]))
     named = not _AUTO_NET.fullmatch(name)
     net = Net(edif_id=nid, name=name, named=named, label_positions=label_positions)
     joined = child(node, 'joined')
@@ -508,8 +528,8 @@ def _read_net(node, design, page):
     for ins in children(node, 'instance'):
         orient, origin = _transform(ins)
         net.junctions.append(origin)
-    for pos, (just, rot) in zip(label_positions, label_styles):
-        page.labels.append(Label(name, pos, nid, rotation=rot, justify=just))
+    for pos, (just, rot), text in zip(label_positions, label_styles, label_texts):
+        page.labels.append(Label(text, pos, nid, rotation=rot, justify=just))
     page.wires.extend(net.wires)
     page.junctions.extend(net.junctions)
     page.nets.append(net)

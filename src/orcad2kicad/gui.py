@@ -32,7 +32,8 @@ import threading
 import traceback
 import webbrowser
 
-from .pipeline import PipelineOptions, Resolutions, run_pipeline
+from .pipeline import PipelineOptions, Resolutions, run_pipeline, classify_dropped
+from .gui_dnd import enable_file_drop
 from .kicad_netlist import find_kicad_cli
 from .branding import PRODUCT, VERSION, COMPANY, SITE_URL, SITE_SHORT, GITHUB_URL, about_text
 from .i18n import t, get_language, detect_default_language, set_language as _set_language
@@ -351,6 +352,45 @@ def load_settings(path=None):
     return data if isinstance(data, dict) else {}
 
 
+_DROP_PRIMARY = (('edf', 'edif'), ('dsn', 'dsn'), ('kicad_project', 'kicad_project'))
+
+
+def drop_assignments(cls, current):
+    """끌어다 놓기 분류(`pipeline.classify_dropped` 결과) + 현재 칸 값 -> {칸: 새 값} (순수 함수).
+
+    칸 이름: edf dsn kicad_project netlist board outdir project input_mode. 반환 dict 의 **순서가
+    곧 적용 순서**다 — 넷리스트/보드를 주 입력보다 먼저 넣어야, 주 입력 변경 때 도는 자동 채움
+    (`_autofill_from_input`, 빈 칸만 채움)이 드롭한 값을 덮지 않고 빠진 것만 제안값으로 채운다.
+      - 주 입력(EDIF/.DSN/.kicad_pro)이 있으면: 드롭이 준 칸은 덮어쓰고, 넷리스트/보드는 드롭이
+        주지 않았으면 비운다(옛 설계의 값이 남지 않게). 주 입력 폴더가 이전과 다르면 출력
+        폴더·프로젝트 이름도 비워 새로 제안받게 하고, 같은 폴더면 사용자가 고친 값을 유지한다.
+      - 넷리스트/보드만 있으면 그 칸만 바꾼다.
+      - 쓸 것이 없으면 빈 dict."""
+    given_primary = [(k, m) for k, m in _DROP_PRIMARY if cls.get(k)]
+    out = {}
+    if given_primary:
+        for k in ('netlist', 'board'):
+            out[k] = cls.get(k) or ''
+        mode = cls.get('mode')
+        key = next(k for k, m in _DROP_PRIMARY if m == mode)
+        old = (current.get(key) or '').strip()
+        if not old or os.path.normcase(os.path.dirname(os.path.abspath(old))) != \
+                os.path.normcase(os.path.dirname(os.path.abspath(cls[key]))):
+            out['outdir'] = ''
+            out['project'] = ''
+        for k, _m in given_primary:
+            out[k] = os.path.normpath(cls[k])
+        out['input_mode'] = mode
+        for k in ('netlist', 'board'):
+            if cls.get(k):
+                out[k] = os.path.normpath(cls[k])
+    else:
+        for k in ('netlist', 'board'):
+            if cls.get(k):
+                out[k] = os.path.normpath(cls[k])
+    return out
+
+
 def save_settings(data, path=None):
     """설정을 저장한다. API 키 등 비밀은 절대 저장하지 않는다(허용 키만 남긴다).
     저장 실패(권한 등)는 조용히 무시한다 — 저장 못 한다고 GUI 가 멈출 이유는 없다."""
@@ -439,6 +479,12 @@ class App(tk.Tk if tk is not None else object):
         self.refresh_backend_status()
         self.protocol('WM_DELETE_WINDOW', self.on_close)
         self._poll_id = self.after(100, self._poll)
+        # 파일/폴더 끌어다 놓기(Windows 전용, 실패하면 조용히 꺼짐). 안내 문구는 입력 프레임을
+        # 다시 그릴 때(언어 전환)도 나오도록 _dnd_enabled 로 기억한다.
+        self._dnd_enabled = False
+        self._dnd_enabled = enable_file_drop(self, self.on_files_dropped)
+        if self._dnd_enabled:
+            self._add_drop_hint()
 
     def _apply_theme(self):
         """기본 Tk 모양(9pt 글꼴, 얇은 여백, 평평한 탭)을 손본다 — 글꼴 한 단계 키우고, 프레임
@@ -665,6 +711,37 @@ class App(tk.Tk if tk is not None else object):
 
         self.var_input_mode.trace_add('write', self._sync_input_mode)
         self._sync_input_mode()
+        self._input_frame = f
+        if getattr(self, '_dnd_enabled', False):
+            self._add_drop_hint()
+
+    def _add_drop_hint(self):
+        """입력 프레임 맨 아래에 끌어다 놓기 안내 한 줄."""
+        ttk.Label(self._input_frame, text=t('note_drop_hint'), foreground='#606060').grid(
+            row=11, column=0, columnspan=3, sticky='w', padx=8, pady=(0, 4))
+
+    def on_files_dropped(self, paths):
+        """탐색기에서 파일/폴더를 놓았을 때 — 확장자/머리글로 분류해 알맞은 입력 칸에 넣는다."""
+        if self.running:
+            self.append_log('drop ignored: a run is in progress')
+            self.set_status(t('status_drop_busy'), 'check')
+            return
+        cls = classify_dropped(paths)
+        current = {k: getattr(self, 'var_' + k).get()
+                   for k in ('edf', 'dsn', 'kicad_project', 'netlist', 'board', 'outdir', 'project')}
+        changes = drop_assignments(cls, current)
+        for note in cls['notes']:
+            self.append_log('drop: ' + note)
+        if not changes:
+            self.append_log('drop: no usable input file found')
+            self.set_status(t('status_drop_ignored'), 'check')
+            return
+        for field_, value in changes.items():
+            getattr(self, 'var_' + field_).set(value)
+            if field_ not in ('outdir', 'project'):
+                self.append_log(f'drop: {field_} = {value or "(cleared)"}')
+        self.set_status(t('status_drop_applied'), 'idle')
+        save_settings(self.settings_dict())
 
     def _sync_input_mode(self, *_a):
         """라디오에서 고른 입력 종류에 맞는 파일 입력칸만 활성화한다."""
