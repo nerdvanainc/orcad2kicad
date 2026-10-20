@@ -90,7 +90,8 @@ def edif_id(x):
     if isinstance(x, list):
         h = head(x)
         if h in ('rename', 'name'):
-            return str(x[1])
+            # (rename (name ID (display …)) "orig") — rename 이 표시 정보가 붙은 name 을 감쌀 수 있다
+            return edif_id(x[1])
     return str(x)
 
 def _fmt_atom(a):
