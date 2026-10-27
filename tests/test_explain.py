@@ -101,3 +101,46 @@ class ExplainEdifTest(unittest.TestCase):
         self.assertIn('출력: 없음', '\n'.join(lines))
         self.assertTrue(lines[-1].startswith('결론: 문제 없음'))
         self.assertLessEqual(STABLE_SCH_CEILING, 20260830)
+
+
+class ExplainNetNamesTest(unittest.TestCase):
+    """넷 이름 방침(localize)과 보드 넷 이름 동기화(board_sync) 요약 줄."""
+
+    def _r(self, **kw):
+        r = PipelineResult(options=PipelineOptions(dsn='X/B.DSN', outdir='X/o'), input_mode='dsn')
+        for k, v in kw.items():
+            setattr(r, k, v)
+        return r
+
+    def test_kicad_with_localize_and_sync_ko(self):
+        r = self._r(net_names='kicad',
+                    localize={'removed': 12, 'kept_names': [], 'renamed': {'DTR#': '/USB/DTR#', 'N1': 'Net-(C7-Pad2)',
+                                                                           'A': 'B', 'C': 'D'},
+                              'verified': True, 'reverted': False},
+                    board_sync={'mode': 'schematic', 'renamed': {'DTR#': '/USB/DTR#'}, 'references': 3,
+                                'unmatched': [], 'consistent': 40, 'total': 40, 'differ': []})
+        text = '\n'.join(explain_result(r, 'ko'))
+        self.assertIn('넷 이름: KiCad 방식', text)
+        self.assertIn('숨은 전역 라벨 12개 제거, 이름이 바뀐 넷 4개', text)
+        self.assertIn('DTR# -> /USB/DTR#', text)
+        self.assertNotIn('C -> D', text)                       # 예시는 3개까지
+        self.assertIn('회로도에 맞춤 - 1개 넷 이름 변경', text)
+        self.assertIn('40/40', text)
+        self.assertIn('Update PCB from Schematic 에서 넷 이름이 바뀌지 않습니다', text)
+
+    def test_differ_listed_and_english_ascii(self):
+        r = self._r(net_names='keep',
+                    board_sync={'mode': 'schematic', 'renamed': {}, 'references': 0, 'unmatched': ['X'],
+                                'consistent': 9, 'total': 11, 'differ': ['GND2', 'VX']})
+        ko = '\n'.join(explain_result(r, 'ko'))
+        self.assertIn('PADS·OrCAD 이름 유지', ko)
+        self.assertIn('이름이 다른 넷 2개: GND2, VX', ko)
+        en = '\n'.join(explain_result(r, 'en'))
+        self.assertTrue(en.isascii(), en)
+        self.assertIn('2 nets differ: GND2, VX', en)
+
+    def test_pads_mode_and_reverted(self):
+        ko = '\n'.join(explain_result(self._r(board_sync={'mode': 'pads'}), 'ko'))
+        self.assertIn('보드 넷 이름: PADS 그대로 유지', ko)
+        r = self._r(net_names='keep', localize={'removed': 0, 'renamed': {}, 'reverted': True})
+        self.assertIn('원복함', '\n'.join(explain_result(r, 'ko')))

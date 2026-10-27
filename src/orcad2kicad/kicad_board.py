@@ -447,6 +447,77 @@ def write_project_board(board, out_pcb, lib_nick='PADS', symbol_paths=None):
     return issues
 
 
+def board_net_mapping(board_nets, sch_nets):
+    """보드 넷 이름 -> 회로도 넷 이름 매핑(이름이 다른 것만)과 매칭 못 한 보드 넷 목록.
+
+    board_nets: {이름: {'REF.PIN'}}(`board_netlist`), sch_nets: {이름: frozenset('REF.PIN')}(kicad-cli
+    넷리스트). 규칙: (1) 핀 집합이 같은 회로도 넷. (2) 없으면 핀이 겹치는 회로도 넷이 정확히 하나이고,
+    보드 넷의 나머지 패드가 회로도 어디에도 없는 핀(마운팅 홀·보드 전용 패드)일 때. (3) 그 밖은 매칭 안 함.
+    두 보드 넷이 같은 회로도 이름으로 가면(보드에서 갈린 넷을 회로도가 합친 경우) 둘 다 매칭에서 뺀다."""
+    by_pins = {}
+    for name, pins in sch_nets.items():
+        by_pins.setdefault(frozenset(pins), []).append(name)
+    owner = {}
+    for name, pins in sch_nets.items():
+        for p in pins:
+            owner.setdefault(p, set()).add(name)
+    target = {}
+    unmatched = []
+    for name, pins in board_nets.items():
+        pins = frozenset(pins)
+        exact = by_pins.get(pins)
+        if exact and len(exact) == 1:
+            target[name] = exact[0]
+            continue
+        hit = set()
+        for p in pins:
+            hit |= owner.get(p, set())
+        rest = [p for p in pins if p not in owner]
+        if len(hit) == 1 and all(p not in owner for p in rest) and len(rest) < len(pins):
+            target[name] = next(iter(hit))
+        else:
+            unmatched.append(name)
+    counts = {}
+    for t in target.values():
+        counts[t] = counts.get(t, 0) + 1
+    mapping = {}
+    for b, t in target.items():
+        if counts[t] > 1:
+            unmatched.append(b)
+        elif b != t:
+            mapping[b] = t
+    return mapping, unmatched
+
+
+def rename_board_nets(pcb_path, mapping):
+    """`.kicad_pcb` 의 넷 참조(`(net "이름")`, 옛 형식 `(net N "이름")`, `(net_name "이름")`)를 mapping 대로
+    바꿔 제자리에 다시 쓴다. 넷이 아닌 글자(gr_text 등)는 건드리지 않는다. 반환값: 바꾼 참조 수."""
+    if not mapping:
+        return 0
+    with open(pcb_path, encoding='utf-8') as fh:
+        tree = parse(fh.read())[0]
+    count = 0
+
+    def walk(node):
+        nonlocal count
+        if not isinstance(node, list):
+            return
+        if node and head(node) in ('net', 'net_name'):
+            for i in range(1, len(node)):
+                v = node[i]
+                if isinstance(v, str) and not isinstance(v, Sym) and mapping.get(v, v) != v:
+                    node[i] = mapping[v]
+                    count += 1
+            return
+        for c in node:
+            walk(c)
+    walk(tree)
+    if count:
+        with open(pcb_path, 'w', encoding='utf-8', newline='\n') as fh:
+            fh.write(to_text(tree) + '\n')
+    return count
+
+
 def write_fp_lib_table(outdir, lib_nick='PADS'):
     """프로젝트용 fp-lib-table 작성 (${KIPRJMOD}/<lib_nick>.pretty 를 가리킴)."""
     path = os.path.join(outdir, 'fp-lib-table')

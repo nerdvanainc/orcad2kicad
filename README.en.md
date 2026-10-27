@@ -94,7 +94,7 @@ Trademarks, the reverse-engineering statement, what is sent to an AI backend and
   Verify the download before trusting it:
 
   ```powershell
-  Get-FileHash orcad2kicad-1.0.3-win64.zip -Algorithm SHA256
+  Get-FileHash orcad2kicad-1.0.4-win64.zip -Algorithm SHA256
   ```
 
   Compare the output against the value in `SHA256SUMS.txt`.

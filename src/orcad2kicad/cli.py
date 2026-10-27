@@ -127,7 +127,9 @@ def main(argv=None):
     ap.add_argument('--pdf', action='store_true', help='also export PDF with kicad-cli')
     ap.add_argument('--board', help='PADS board file (.asc: kicad-cli import; .kicad_pcb: read directly)')
     ap.add_argument('--net-names', choices=['kicad', 'keep'],
-                     help="net naming mode (default: 'keep' if --board else 'kicad')")
+                     help="kicad (default): OrCAD page aliases stay local labels and unnamed nets get "
+                          "KiCad names (no artificial global labels; .DSN: importer hidden global labels "
+                          "removed); keep: net names = PADS/OrCAD names via global labels")
     ap.add_argument('--strict-board', action='store_true',
                      help='exit 1 if [4] board-vs-schematic net compare fails or refs differ')
     ap.add_argument('--nightly-format', dest='stable_format', action='store_false',
@@ -137,6 +139,21 @@ def main(argv=None):
     ap.add_argument('--no-import-cleanup', dest='import_cleanup', action='store_false',
                      help='kicad-project/dsn mode: skip post-import cleanup (merging hop-gap wire '
                           'fragments, blank drawing sheet) that runs by default before ERC/PDF')
+    ap.add_argument('--keep-wire-width', dest='default_wire_width', action='store_false',
+                     help='kicad-project/dsn mode: keep the importer wire width (0.254 mm) instead '
+                          'of switching wires to the KiCad default width (default: switch)')
+    ap.add_argument('--board-net-names', choices=('schematic', 'pads'), default=None,
+                     help='with --board: rename the output board nets to the schematic net names so '
+                          '"Update PCB from Schematic" keeps every net name (schematic, default) or keep '
+                          'the PADS names (pads)')
+    ap.add_argument('--hidden-labels', choices=('keep', 'shrink'), default='keep',
+                     help='dsn/kicad-project mode: hidden (transparent) importer labels that remain are '
+                          'drawn black in PDF/SVG plots; shrink their text to 0.01 mm (shrink) or leave '
+                          'them (keep, default)')
+    ap.add_argument('--korean-font', default='Malgun Gothic', metavar='NAME',
+                     help='font face set on texts/labels/fields containing Korean (KiCad default and '
+                          'Latin fonts cannot draw Hangul); "" to leave fonts unchanged '
+                          '(default: "Malgun Gothic")')
     # 불일치 해소(3단계-B Task 2). GUI 없이도 같은 결정을 줄 수 있게 한 플래그들.
     ap.add_argument('--add-board-part', action='append', default=[], metavar='REF',
                      help='add a board-only part as a placeholder symbol on page 99-PCB-ONLY (repeatable)')
@@ -174,7 +191,10 @@ def main(argv=None):
         netlist=args.netlist, board=args.board, outdir=args.outdir,
         project=args.project, kicad_cli=args.kicad_cli, net_names=args.net_names,
         pdf=args.pdf, strict_board=args.strict_board, stable_format=args.stable_format,
-        import_cleanup=args.import_cleanup, resolutions=rez))
+        import_cleanup=args.import_cleanup, default_wire_width=args.default_wire_width,
+        korean_font=args.korean_font, board_net_names=args.board_net_names,
+        hidden_labels=args.hidden_labels,
+        resolutions=rez))
     if result.error:                       # 입력/출력 오류: stdout 에는 아무것도 쓰지 않는다
         print(f'error: {result.error}', file=sys.stderr)
         return result.exit_code

@@ -575,9 +575,32 @@ grayed out (exactly one of the three is passed to the pipeline — see Chapters 
 | Project name | If left empty, EDIF input uses the design name; KiCad project/`.DSN` input uses the input `.kicad_pro`/`.DSN` file name as-is. |
 | kicad-cli path | If left empty, the auto-detected path is filled in on startup. If multiple versions are installed, force one here (either stable or nightly can be specified — see the hint text below and Chapter 0 for which is needed when). |
 | [Prepare KiCad nightly portable (no install)] button | Prepares the latest KiCad nightly with no installation, just archive extraction, and auto-fills the "kicad-cli path" field above once done (Chapter 0). The gray hint text beside it, **"The nightly (10.99+) is needed only for `.DSN` import. The result is saved in the stable KiCad 10.0 format,"** tells you when the nightly build is actually needed — if you only use EDIF or an already-imported KiCad project, you don't need to click this button. |
-| Net names: auto/keep board names (keep)/KiCad style | "Auto" uses `keep` if a board is specified, `kicad` otherwise. `keep` leaves the PADS net names as global labels so they keep matching the board (recommended when board-linking). `kicad` mode lets KiCad assign its own names like `Net-(...)`. `.DSN`/KiCad project input always behaves as `keep` regardless of this choice, since the imported schematic already uses global labels (a note about this appears in the log). |
+| Net names: KiCad style (recommended) / Keep PADS/OrCAD names | Default is **KiCad style**: no artificial global labels. OrCAD page aliases (`DTR#` ...) stay local labels, so KiCad net names become `/USB/DTR#` (with the sheet path), and unnamed nets get KiCad auto names like `Net-(C7-Pad2)`. **Keep PADS/OrCAD names** (`keep`) is the old behaviour: aliases and unnamed nets are promoted to global labels (square flags) so the names stay identical. See "Choosing the net-name options" below. |
+| Board net names: Match schematic (recommended) / Keep PADS | Only meaningful with a PADS board. **Match schematic** (default) renames the output board nets to the schematic net names so Update PCB from Schematic changes no net names. **Keep PADS** leaves the PADS names (nets whose schematic name differs may be renamed by Update PCB). |
+| Hide hidden labels in PDF (.DSN) | Enabled for `.DSN`/KiCad project input only. Leftover transparent importer labels are plotted black in PDF/SVG; checking this shrinks them to 0.01 mm (`--hidden-labels shrink`). Off by default. |
+| Korean font | Font assigned to texts containing Korean. Default `Malgun Gothic`; empty = do not assign (`--korean-font`). |
+| Net-name explanation line (blue text under the input area) | Shows the **consequence of the current combination** in one or two lines and updates as you change a selection. Without a board only the net-names explanation is shown. |
 | PDF output | If checked, also produces a schematic PDF via kicad-cli. |
 | Board diff strict | If checked, treats the run as a failure (exit code 1) when [4] board vs. schematic comparison fails or references differ. Off by default, showing information only and finishing as a success. |
+
+#### Choosing the net-name options
+
+| Combination (CLI) | Schematic net names | Board net names | Choose it when |
+|---|---|---|---|
+| KiCad style + Match schematic (default) | KiCad names such as `/USB/DTR#`, `Net-(C7-Pad2)` | Renamed to match -> zero renames in Update PCB | **You use the converted project as-is.** No risk of unrelated nets merging through globalised labels. |
+| Keep names + Keep PADS (`--net-names keep --board-net-names pads`) | PADS/OrCAD names (aliases and auto-named nets as global labels) | PADS names | **You import the PADS ASCII separately in KiCad.** Every name equals PADS. Cost: more square global labels, and same-named aliases on several pages may merge. |
+| KiCad style + Keep PADS (`--board-net-names pads`) | KiCad names | PADS names | You want the board exactly as in PADS and accept that Update PCB renames alias/unnamed nets (connections unchanged). |
+| Keep names + Match schematic (`--net-names keep`) | PADS/OrCAD names (global labels) | Matched -> almost no renames | Schematic names equal PADS and the board must always agree with the schematic. |
+
+Safeguards: before/after every KiCad-style change the kicad-cli netlist **pin partition must be identical**
+(otherwise the net's name is protected or the change reverted); the board sync re-reads the board and counts
+nets whose (name, pins) equal the schematic. Without kicad-cli these steps are skipped and logged.
+
+Where to see it: the `net names: kicad|keep` log line (plus `aliases localized: N hidden global labels removed`
+for `.DSN`/KiCad project input), `[4b] board net names -> schematic: N renamed, M unmatched` with
+`board nets with the same name as the schematic: K/K  (Update PCB keeps all net names)`, and the Result tab
+summary (removed hidden labels, up to 3 rename examples, differing nets). `[4]` still compares the board
+with its original PADS names.
 
 **Drag and drop files/folders (Windows only)**: drop files or folders from Explorer onto the main
 window and they are placed into the matching fields by extension (a gray hint at the bottom of the
@@ -737,7 +760,10 @@ re-check as the version advances):
 | `--kicad-cli KICAD_CLI` | Path to the kicad-cli executable | auto-detected |
 | `--pdf` | Also output a schematic PDF via kicad-cli | off |
 | `--board BOARD` | PADS board (`.asc` is imported via kicad-cli; `.kicad_pcb` is read as-is) | none |
-| `--net-names {kicad,keep}` | How net names are assigned | `keep` if `--board` is given, `kicad` otherwise |
+| `--net-names {kicad,keep}` | `kicad`: KiCad-style names without artificial global labels (aliases local, unnamed nets `Net-(...)`; for `.DSN`/KiCad project the importer's hidden global labels are removed after a netlist check). `keep`: keep PADS/OrCAD names via global labels (old behaviour) | `kicad` |
+| `--board-net-names {schematic,pads}` | With `--board`: `schematic` renames output board nets to the schematic names (no renames in Update PCB); `pads` keeps PADS names | `schematic` |
+| `--hidden-labels {keep,shrink}` | `.DSN`/KiCad project only. `shrink` makes leftover transparent labels 0.01 mm so they are not plotted black | `keep` |
+| `--korean-font NAME` | Font for texts containing Korean (empty = do not assign) | `Malgun Gothic` |
 | `--strict-board` | Exit code 1 if [4] board vs. schematic comparison FAILs or references differ | off (information only, no effect on exit code) |
 | `--nightly-format` | `--kicad-project`/`--dsn` only. Leaves the nightly importer's output **as-is** instead of restructuring it into the stable KiCad 10.0 format (root sheet + sub-sheets, Phase 3-C-2) (opening that result and running [3]/ERC on it will again require the nightly kicad-cli) | off (default always restructures into the stable format) |
 | `--add-board-part REF` | Add a board-only reference to the schematic as a placeholder symbol (repeatable) | none |
@@ -953,7 +979,7 @@ still refused).
 
 | Tool | What it does | Writes files? |
 |---|---|---|
-| `convert` | Converts to a KiCad project + runs every verification that's possible. Input is exactly **one** of `edf` (OrCAD EDIF, all of [1]–[4]) / `dsn` (OrCAD `.DSN` — natively imported via nightly kicad-cli, then [3][4] without [1][2]) / `kicad_project` (an existing KiCad project, [3][4] without [1][2]) (any other combination is a ToolError). `outdir` is required; it also accepts all the CLI-corresponding options: `netlist`/`board`/`project`/`net_names`/`pdf`/`strict_board`/`kicad_cli`/`add_board_only_parts`/`footprint_choice`/`pin_type_overrides`/`ignore_refs`, etc. (`add_board_only_parts`/`footprint_choice`/`pin_type_overrides` only apply with `edf` input). | Yes (tens of seconds; `.DSN` import can take longer) |
+| `convert` | Converts to a KiCad project + runs every verification that's possible. Input is exactly **one** of `edf` (OrCAD EDIF, all of [1]–[4]) / `dsn` (OrCAD `.DSN` — natively imported via nightly kicad-cli, then [3][4] without [1][2]) / `kicad_project` (an existing KiCad project, [3][4] without [1][2]) (any other combination is a ToolError). `outdir` is required; it also accepts all the CLI-corresponding options: `netlist`/`board`/`project`/`net_names`/`board_net_names`/`hidden_labels`/`korean_font`/`pdf`/`strict_board`/`kicad_cli`/`add_board_only_parts`/`footprint_choice`/`pin_type_overrides`/`ignore_refs`, etc. (`add_board_only_parts`/`footprint_choice`/`pin_type_overrides` only apply with `edf` input). | Yes (tens of seconds; `.DSN` import can take longer) |
 | `verify` | Reads only the EDIF and runs just [1][2] verification against `--netlist` (no files written, a few seconds) | No |
 | `board_diff` | Produces just the [4] comparison report from EDIF + board alone | No (a `.asc` board is briefly imported via kicad-cli into a temp folder) |
 | `list_issues` | The issue list left by the most recent convert/verify/board_diff run in this session | No |

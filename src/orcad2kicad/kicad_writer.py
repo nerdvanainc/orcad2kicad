@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from .model import Graphic, PIN_TYPE_TO_KICAD
 from .geometry import ORIENT, snap_to_wires, transform_point, pin_world
+from .kicad_fonts import DEFAULT_KOREAN_FONT, apply_korean_font
 
 FORMAT_VERSION = 20231120
 GENERATOR = 'orcad2kicad'
@@ -1053,7 +1054,7 @@ def _project_json(project, root_uuid, design, sheet_uuids, extra_pages=()):
 
 def write_project(design, outdir, project_name=None, symset=None, footprint_map=None, footprint_lib='PADS',
                   net_names='kicad', extra_parts=None, pin_type_overrides=None, footprint_choice=None,
-                  netlist_footprints=None):
+                  netlist_footprints=None, korean_font=DEFAULT_KOREAN_FONT):
     """Design -> outdir 에 KiCad 프로젝트 전체를 쓴다.
 
     footprint_map: {ref: 보드 풋프린트 id}. 있으면 인스턴스 Footprint 프로퍼티가
@@ -1065,8 +1066,13 @@ def write_project(design, outdir, project_name=None, symset=None, footprint_map=
     pin_type_overrides: {(심볼 이름, 핀 번호): KiCad 전기 타입} — build_symbols 결과에 적용.
     footprint_choice: {ref: 'board'|'orcad'} — 'orcad' 인 ref 만 OrCAD 풋프린트 이름을 쓴다.
     netlist_footprints: {ref: PADS .asc *PART* 풋프린트 이름} — footprint_map 이 있을 때 보드에
-      없는 ref 중 OrCAD 풋프린트가 비어 있는 것만 이 이름으로 채운다(넷리스트 폴백)."""
+      없는 ref 중 OrCAD 풋프린트가 비어 있는 것만 이 이름으로 채운다(넷리스트 폴백).
+    korean_font: 한글이 든 글자·라벨·속성·핀 이름에 지정할 글꼴(`kicad_fonts.apply_korean_font`).
+      KiCad 기본 스트로크 글꼴은 한글을 그리지 않는다. '' 이면 지정하지 않는다."""
     os.makedirs(outdir, exist_ok=True)
+
+    def kfont(text):
+        return apply_korean_font(text, korean_font)[0]
     project = sanitize(project_name or design.name)
     symset = symset or build_symbols(design)
     res = WriteResult(symset=symset, issues=list(symset.issues))
@@ -1113,7 +1119,7 @@ def write_project(design, outdir, project_name=None, symset=None, footprint_map=
                           footprint_choice=footprint_choice, netlist_footprints=netlist_footprints)
         path = os.path.join(outdir, page_filename(page.name))
         with open(path, 'w', encoding='utf-8', newline='\n') as f:
-            f.write(text)
+            f.write(kfont(text))
         res.page_files.append(path)
     if parts:
         sym_names = add_placeholder_symbols(symset, parts)
@@ -1122,15 +1128,15 @@ def write_project(design, outdir, project_name=None, symset=None, footprint_map=
                                       footprint_lib=footprint_lib)
         path = os.path.join(outdir, page_filename(PLACEHOLDER_PAGE))
         with open(path, 'w', encoding='utf-8', newline='\n') as f:
-            f.write(text)
+            f.write(kfont(text))
         res.page_files.append(path)
     res.symbol_paths = {r: p for r, (u, p) in symbol_paths_tmp.items()}
     res.root_sch = os.path.join(outdir, f'{project}.kicad_sch')
     with open(res.root_sch, 'w', encoding='utf-8', newline='\n') as f:
-        f.write(_root_text(design, project, root_uuid, sheet_uuids, extra_pages))
+        f.write(kfont(_root_text(design, project, root_uuid, sheet_uuids, extra_pages)))
     res.lib_file = os.path.join(outdir, f'{LIB_NICK}.kicad_sym')
     with open(res.lib_file, 'w', encoding='utf-8', newline='\n') as f:
-        f.write(symbol_lib_text(symset))
+        f.write(kfont(symbol_lib_text(symset)))
     with open(os.path.join(outdir, 'sym-lib-table'), 'w', encoding='utf-8', newline='\n') as f:
         f.write(f'(sym_lib_table (version 7)\n  (lib (name {qstr(LIB_NICK)}) (type "KiCad") (uri "${{KIPRJMOD}}/{LIB_NICK}.kicad_sym") (options "") (descr "OrCAD import"))\n)\n')
     res.pro_file = os.path.join(outdir, f'{project}.kicad_pro')

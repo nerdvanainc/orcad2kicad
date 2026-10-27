@@ -263,6 +263,34 @@ def run_erc(kicad_cli, root_sch, out_json):
     return {'count': len(items), 'by_type': by_type, 'items': items}
 
 
+def netlist_signature(text):
+    """kicadsexpr 넷리스트 -> {넷 이름: frozenset('REF.PIN')} — **모든** 넷(unconnected-·#PWR 포함).
+
+    `parse_kicad_netlist` 는 검증용으로 일부 넷을 빼지만, 이것은 회로도 수정 전후가 이름까지
+    완전히 같은지 대조하는 용도라 아무것도 빼지 않는다."""
+    tree = parse(text)[0]
+    nets_node = child(tree, 'nets')
+    out = {}
+    for n in children(nets_node, 'net') if nets_node is not None else []:
+        out[str(child(n, 'name')[1])] = frozenset(
+            f"{child(nd, 'ref')[1]}.{child(nd, 'pin')[1]}" for nd in children(n, 'node'))
+    return out
+
+
+def schematic_net_signature(kicad_cli, root_sch, workdir):
+    """회로도 -> kicad-cli 넷리스트 -> `netlist_signature`. 임시 파일은 workdir 에 쓰고 지운다."""
+    path = os.path.join(workdir, '_o2k_netcheck.net')
+    try:
+        export_netlist(kicad_cli, root_sch, path)
+        with open(path, encoding='utf-8') as fh:
+            return netlist_signature(fh.read())
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def parse_kicad_netlist(text):
     """kicadsexpr 넷리스트 -> {넷 이름: {REF.PIN}}. #PWR 노드와 unconnected- 넷은 제외."""
     tree = parse(text)[0]

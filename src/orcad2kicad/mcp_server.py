@@ -100,7 +100,7 @@ TOOLS = [
             'kicad-cli able to read the schematic format) and [4] board vs schematic. Writes '
             'files to disk. Returns the full pipeline result as JSON: options, input_mode, '
             'summary, text (the human report), verifications, board_diff, erc, files, issues, '
-            'log, kicad_cli, net_names, import_cleanup (sheets/gaps_merged/worksheet when applied '
+            'log, kicad_cli, net_names, localize, board_sync, import_cleanup (sheets/gaps_merged/worksheet when applied '
             'in dsn/kicad_project mode), exit_code (0 pass / 1 verification failed / 2 io error), '
             'error. This can take tens of seconds on a large design (longer for a .DSN import).'),
         'inputSchema': {
@@ -128,7 +128,13 @@ TOOLS = [
                 'board': {'type': 'string', 'description': 'Optional PADS Layout ASCII (.asc, imported with kicad-cli) or an existing .kicad_pcb.'},
                 'project': {'type': 'string', 'description': 'Project name (default: the EDIF design name, or the .DSN stem for dsn mode).'},
                 'net_names': {'type': 'string', 'enum': ['kicad', 'keep'],
-                              'description': "Net naming: 'keep' writes global labels so PADS net names survive (default when board is given); 'kicad' lets KiCad name nets."},
+                              'description': "Net naming (default 'kicad'): 'kicad' adds no artificial global labels - OrCAD page aliases stay local labels (KiCad names like /USB/DTR#) and unnamed nets get KiCad auto names (Net-(C7-Pad2)); in dsn/kicad_project mode the importer's hidden global labels are removed (netlist-verified). 'keep' keeps net names equal to the PADS/OrCAD names via global labels (aliases and auto-named nets become global labels; same-named aliases on several pages may merge)."},
+                'board_net_names': {'type': 'string', 'enum': ['schematic', 'pads'],
+                                    'description': "Only with a board (default 'schematic'): 'schematic' renames the output board nets to the schematic net names so Update PCB from Schematic changes no net names; 'pads' keeps the PADS names on the board."},
+                'hidden_labels': {'type': 'string', 'enum': ['keep', 'shrink'],
+                                  'description': "dsn/kicad_project input only (default 'keep'): remaining hidden importer labels are plotted black in PDF/SVG; 'shrink' makes them 0.01 mm."},
+                'korean_font': {'type': 'string',
+                                'description': "Font name for texts containing Korean (default 'Malgun Gothic'); empty string disables."},
                 'pdf': {'type': 'boolean', 'description': 'Also export a schematic PDF with kicad-cli.'},
                 'strict_board': {'type': 'boolean', 'description': 'Treat board/schematic differences as a failure (exit_code 1).'},
                 'import_cleanup': {'type': 'boolean',
@@ -425,6 +431,10 @@ class Server:
             project=_arg_str(args, 'project'),
             kicad_cli=_arg_str(args, 'kicad_cli'),
             net_names=_arg_choice(args, 'net_names', ('kicad', 'keep')),
+            board_net_names=_arg_choice(args, 'board_net_names', ('schematic', 'pads')),
+            hidden_labels=_arg_choice(args, 'hidden_labels', ('keep', 'shrink')) or 'keep',
+            korean_font=(args['korean_font'] if isinstance(args.get('korean_font'), str)
+                         else 'Malgun Gothic'),
             pdf=_arg_bool(args, 'pdf'),
             strict_board=_arg_bool(args, 'strict_board'),
             import_cleanup=_arg_bool(args, 'import_cleanup', True),

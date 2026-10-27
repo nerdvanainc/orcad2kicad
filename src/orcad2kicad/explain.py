@@ -83,6 +83,72 @@ def _cmp_text(cmp, what_ko, what_en, lang):
             f'{n_ref} only in the reference. See the net table.')
 
 
+def _examples(mapping, n=3):
+    """{old: new} -> 'a -> b, c -> d' (앞 n개)."""
+    return ', '.join(f'{k} -> {v}' for k, v in list(mapping.items())[:n])
+
+
+def _net_name_lines(result, lang):
+    """넷 이름 모드(`--net-names`)와 보드 넷 이름 동기화(`--board-net-names`) 결과 설명 줄."""
+    ko = lang == 'ko'
+    L = []
+    nn = getattr(result, 'net_names', None) or 'kicad'
+    if nn == 'keep':
+        L.append('넷 이름: PADS·OrCAD 이름 유지(keep) - 별칭·이름 없는 넷은 전역 라벨(사각 깃발)로 만들어 이름을 지킴. '
+                 '같은 이름 별칭이 여러 페이지에 있으면 합쳐질 수 있음.' if ko
+                 else 'net names: keep PADS/OrCAD names (keep) - aliases and unnamed nets become global labels '
+                      '(square flags) so names survive; same-named aliases on several pages may merge.')
+    else:
+        L.append('넷 이름: KiCad 방식(kicad) - 인위적 전역 라벨 없음. 별칭은 지역 라벨(예: /USB/DTR#), '
+                 '이름 없는 넷은 KiCad 자동 이름(예: Net-(C7-Pad2)).' if ko
+                 else 'net names: KiCad style (kicad) - no artificial global labels. Aliases are local labels '
+                      '(e.g. /USB/DTR#), unnamed nets get KiCad auto names (e.g. Net-(C7-Pad2)).')
+    loc = getattr(result, 'localize', None)
+    if loc:
+        if loc.get('reverted'):
+            L.append('    숨은 전역 라벨 제거는 연결이 달라져 원복함(keep 상태로 남음).' if ko
+                     else '    removing hidden global labels changed connectivity and was reverted (stays keep).')
+        else:
+            ren = loc.get('renamed') or {}
+            ex = _examples(ren)
+            L.append((f'    임포터가 붙인 숨은 전역 라벨 {loc.get("removed", 0)}개 제거, 이름이 바뀐 넷 {len(ren)}개'
+                      + (f'(예: {ex})' if ex else '') + ' - 핀 연결은 kicad-cli 넷리스트로 동일함을 확인.') if ko
+                     else (f'    removed {loc.get("removed", 0)} hidden importer global labels, {len(ren)} nets renamed'
+                           + (f' (e.g. {ex})' if ex else '') + ' - pin connectivity verified identical with kicad-cli.'))
+    bs = getattr(result, 'board_sync', None)
+    if bs:
+        mode = bs.get('mode')
+        if mode == 'pads':
+            L.append('보드 넷 이름: PADS 그대로 유지. 회로도 이름과 다른 넷은 Update PCB from Schematic 때 바뀔 수 있음'
+                     '(이 모드에서는 차이를 계산하지 않음).' if ko
+                     else 'board net names: kept as PADS. Nets whose schematic name differs may be renamed by '
+                          'Update PCB from Schematic (the difference is not computed in this mode).')
+        elif bs.get('reverted'):
+            L.append('보드 넷 이름: 회로도에 맞추는 중 패드 연결이 달라져 원복함(PADS 이름 그대로).' if ko
+                     else 'board net names: sync reverted because pad connectivity changed (PADS names kept).')
+        elif bs.get('skipped'):
+            L.append('보드 넷 이름: 맞추지 못함 - 회로도 넷리스트를 읽을 kicad-cli가 없음(PADS 이름 그대로).' if ko
+                     else 'board net names: not synced - no kicad-cli to read the schematic netlist (PADS names kept).')
+        else:
+            ren = bs.get('renamed') or {}
+            ex = _examples(ren)
+            total, cons = bs.get('total', 0), bs.get('consistent', 0)
+            differ = bs.get('differ') or []
+            head = (f'보드 넷 이름: 회로도에 맞춤 - {len(ren)}개 넷 이름 변경' + (f'(예: {ex})' if ex else '')
+                    + f', 회로도와 이름이 같은 보드 넷 {cons}/{total}.') if ko else \
+                (f'board net names: matched to the schematic - {len(ren)} nets renamed'
+                 + (f' (e.g. {ex})' if ex else '') + f', {cons}/{total} board nets have the schematic name.')
+            L.append(head)
+            if not differ:
+                L.append('    Update PCB from Schematic 에서 넷 이름이 바뀌지 않습니다.' if ko
+                         else '    Update PCB from Schematic will not change any net name.')
+            else:
+                names = ', '.join(differ[:8]) + ('...' if len(differ) > 8 else '')
+                L.append(f'    이름이 다른 넷 {len(differ)}개: {names} - Update PCB 에서 바뀔 수 있음.' if ko
+                         else f'    {len(differ)} nets differ: {names} - Update PCB may rename them.')
+    return L
+
+
 def _explain(result, lang='ko'):
     """PipelineResult -> (설명 줄 목록, 확인할 항목 목록). 판정은 결과에 있는 값만 해석한다."""
     ko = lang == 'ko'
@@ -201,6 +267,9 @@ def _explain(result, lang='ko'):
     elif opts.board is None:
         L.append('[4] ' + ('건너뜀 - PADS 보드를 지정하지 않음. 배선된 PADS Layout ASCII(.asc)를 "보드" 칸에 주면 풋프린트 라이브러리(PADS.pretty)와 회로도-보드 연결(path)을 만들고 부품·넷 차이를 대조함.' if ko
                            else 'skipped - no PADS board given. Give the routed PADS Layout ASCII (.asc) as the board to build PADS.pretty, link schematic and board, and compare parts/nets.'))
+
+    # 4b) 넷 이름 방침과 보드 넷 이름 동기화(옵션의 결과를 사람이 알아보도록)
+    L.extend(_net_name_lines(result, lang))
 
     # 5) ERC
     erc = result.erc

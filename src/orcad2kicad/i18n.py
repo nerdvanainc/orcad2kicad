@@ -103,9 +103,26 @@ STRINGS = {
         'status_drop_busy': '실행 중에는 끌어다 놓기를 무시합니다',
         'status_drop_applied': '끌어다 놓은 파일을 입력 칸에 반영했습니다',
         'label_net_names': '넷 이름:',
-        'net_names_auto': '자동',
-        'net_names_keep': '보드 이름 유지(keep)',
-        'net_names_kicad': 'KiCad 방식',
+        'net_names_kicad': 'KiCad 방식 (권장)',
+        'net_names_keep': 'PADS·OrCAD 이름 유지',
+        'label_board_net_names': '보드 넷 이름:',
+        'board_net_names_schematic': '회로도에 맞춤 (권장)',
+        'board_net_names_pads': 'PADS 그대로',
+        'chk_hidden_labels': 'PDF에서 숨은 라벨 감추기 (.DSN)',
+        'label_korean_font': '한글 글꼴:',
+        'netexp_kicad_schematic': ('회로도는 KiCad 방식 이름(예: DTR# -> /USB/DTR#, 이름 없는 넷 -> Net-(C7-Pad2)), '
+                                   '변환된 보드도 같은 이름으로 맞춤 -> Update PCB 시 넷 이름 변경 없음. '
+                                   'PADS ASCII 를 KiCad 에서 따로 임포트하면 별칭·이름 없는 넷의 이름이 달라짐'),
+        'netexp_keep_pads': ('넷 이름 = PADS 이름. PADS 를 따로 임포트해도 이름 일치. 대신 별칭·이름 없는 넷이 '
+                             '전역 라벨(사각 깃발)로 바뀌고, 같은 이름 별칭이 여러 페이지에 있으면 합쳐질 수 있음'),
+        'netexp_kicad_pads': ('회로도는 KiCad 방식 이름, 보드는 PADS 이름 그대로 -> Update PCB 를 하면 별칭·이름 없는 '
+                              '넷의 이름이 보드에서 KiCad 이름으로 바뀜(연결은 그대로)'),
+        'netexp_keep_schematic': ('넷 이름 = PADS 이름(전역 라벨), 보드도 회로도에 맞춤 -> 대부분 이름 변경 없음. '
+                                  '별칭·이름 없는 넷이 전역 라벨로 바뀌고 같은 이름 별칭이 합쳐질 수 있음'),
+        'netexp_kicad_noboard': ('KiCad 방식 이름(예: DTR# -> /USB/DTR#, 이름 없는 넷 -> Net-(C7-Pad2)). '
+                                 '인위적 전역 라벨을 만들지 않아 같은 이름 별칭이 서로 합쳐지지 않음'),
+        'netexp_keep_noboard': ('넷 이름 = PADS·OrCAD 이름. 별칭·이름 없는 넷이 전역 라벨(사각 깃발)로 바뀌고, '
+                                '같은 이름 별칭이 여러 페이지에 있으면 합쳐질 수 있음'),
         'chk_pdf': 'PDF 출력',
         'chk_strict': '보드 차이 엄격(strict)',
         'label_input_file_generic': '입력 파일',
@@ -270,9 +287,28 @@ STRINGS = {
         'status_drop_busy': 'Drag and drop is ignored while a run is in progress',
         'status_drop_applied': 'Dropped files applied to the input fields',
         'label_net_names': 'Net names:',
-        'net_names_auto': 'Auto',
-        'net_names_keep': 'Keep board names (keep)',
-        'net_names_kicad': 'KiCad style',
+        'net_names_kicad': 'KiCad style (recommended)',
+        'net_names_keep': 'Keep PADS/OrCAD names',
+        'label_board_net_names': 'Board net names:',
+        'board_net_names_schematic': 'Match schematic (recommended)',
+        'board_net_names_pads': 'Keep PADS',
+        'chk_hidden_labels': 'Hide hidden labels in PDF (.DSN)',
+        'label_korean_font': 'Korean font:',
+        'netexp_kicad_schematic': ('Schematic uses KiCad-style names (e.g. DTR# -> /USB/DTR#, unnamed net -> Net-(C7-Pad2)); '
+                                   'the converted board is renamed to match -> Update PCB changes no net names. '
+                                   'If you import the PADS ASCII separately in KiCad, alias and unnamed nets get different names'),
+        'netexp_keep_pads': ('Net names = PADS names, so a separate PADS import matches too. In return, aliases and '
+                             'unnamed nets become global labels (square flags), and same-named aliases on several '
+                             'pages may merge'),
+        'netexp_kicad_pads': ('Schematic uses KiCad-style names but the board keeps PADS names -> Update PCB will '
+                              'rename alias and unnamed nets on the board to the KiCad names (connections unchanged)'),
+        'netexp_keep_schematic': ('Net names = PADS names (global labels) and the board matches the schematic -> '
+                                  'mostly no renames. Aliases and unnamed nets become global labels and same-named '
+                                  'aliases may merge'),
+        'netexp_kicad_noboard': ('KiCad-style names (e.g. DTR# -> /USB/DTR#, unnamed net -> Net-(C7-Pad2)). No '
+                                 'artificial global labels, so same-named aliases never merge'),
+        'netexp_keep_noboard': ('Net names = PADS/OrCAD names. Aliases and unnamed nets become global labels (square '
+                                'flags); same-named aliases on several pages may merge'),
         'chk_pdf': 'PDF output',
         'chk_strict': 'Strict board diff (strict)',
         'label_input_file_generic': 'input file',

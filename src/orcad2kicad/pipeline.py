@@ -13,6 +13,7 @@ exit code 규약(기존 CLI와 동일):
 콘솔에 나가는 문자열은 전부 ASCII 영문.
 """
 from __future__ import annotations
+import glob
 import os
 from dataclasses import dataclass, field, asdict
 
@@ -42,13 +43,22 @@ class PipelineOptions:
     outdir: str = None
     project: str = None
     kicad_cli: str = None
-    net_names: str = None        # 'kicad' | 'keep' | None(자동: board 있으면 keep)
+    net_names: str = None        # 'kicad'(기본, None 도 kicad) | 'keep' — 인위적 전역화 여부.
+                                  # kicad: OrCAD 별칭은 지역 라벨, 자동 이름 넷은 라벨 없음(.DSN 이면 임포터의
+                                  # 투명 전역 라벨을 지움). keep: 넷 이름 = PADS/OrCAD 이름(전역 라벨로 승격·
+                                  # 임포터 결과 그대로). docs/2026-10-27/[설계]_[03].
+    board_net_names: str = None  # 'schematic'(기본, None 도) | 'pads' — 출력 보드 넷 이름을 회로도에 맞출지.
+    hidden_labels: str = 'keep'  # 'keep' | 'shrink' — 남은 투명 라벨(.DSN)을 PDF 에서 안 보이게 글자 축소.
     pdf: bool = False
     strict_board: bool = False
     stable_format: bool = True   # kicad-project/dsn 모드: 나이틀리 결과를 정식 KiCad 10.0
                                   # 포맷(루트 시트 + 하위 시트)으로 재구성한다(--nightly-format 로 끔).
     import_cleanup: bool = True  # kicad-project/dsn 모드: 임포터 결함 후처리(hop 갭 병합 +
                                   # 빈 도면 양식, kicad_cleanup.cleanup_project) — --no-import-cleanup 로 끔.
+    default_wire_width: bool = True  # import_cleanup 의 일부: 임포터가 박은 배선 폭(0.254 mm)을
+                                      # KiCad 기본 폭(0)으로 — --keep-wire-width 로 끔.
+    korean_font: str = 'Malgun Gothic'  # 한글이 든 글자·라벨·속성에 지정할 글꼴(EDIF·DSN 공통,
+                                         # kicad_fonts). KiCad 기본/영문 글꼴은 한글을 못 그린다. '' = 끔.
     resolutions: Resolutions = field(default_factory=Resolutions)
 
 
@@ -69,6 +79,8 @@ class PipelineResult:
     kicad_cli: str = None
     net_names: str = 'kicad'
     import_cleanup: dict = None          # kicad_cleanup.cleanup_project() 의 반환값(적용했으면)
+    board_sync: dict = None              # 보드 넷 이름 동기화 결과(_sync_board_net_names)
+    localize: dict = None                # .DSN 별칭 지역화 결과(localize_project_guarded)
     exit_code: int = 0
     error: str = None                    # 입력/출력 오류 메시지 (exit 2, 그 시점에 중단)
     ref_nets: dict = None                # 기준 넷리스트({넷: {REF.PIN}}) — 재실행/비교용
@@ -370,7 +382,7 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
         if ref_nets_eff is not None:
             ref_nets_eff = augment_reference(ref_nets_eff, board, added_refs, design.canonical)
 
-    net_names = opts.net_names or ('keep' if board is not None else 'kicad')
+    net_names = opts.net_names or 'kicad'
     if extra_parts and net_names != 'keep':
         # 자리표시 부품은 global_label 로만 넷에 붙으므로 이름 보존 모드가 아니면 연결이 끊긴다.
         design.issues.append("net names: 'keep' forced by board-only placeholder parts")
@@ -382,7 +394,8 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
                             extra_parts=extra_parts,
                             pin_type_overrides=rez.pin_type_overrides,
                             footprint_choice=rez.footprint_choice,
-                            netlist_footprints=(ref.parts if ref is not None else None))
+                            netlist_footprints=(ref.parts if ref is not None else None),
+                            korean_font=opts.korean_font)
     except OSError as e:
         result.error = f'cannot write output: {e}'
         result.exit_code = 2
@@ -458,7 +471,110 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
         if opts.strict_board and (not diff.net_compare.ok or diff.only_sch_refs or diff.only_board_refs):
             # 이전에 exit_code=2(kicad-cli 실패)였으면 downgrade 되지 않게 max 를 쓴다.
             result.exit_code = max(result.exit_code, 1)
+    _sync_board_net_names(opts, result, emit, cli_path, res.root_sch)
     return result
+
+
+def _apply_net_scope_options(opts, result, emit, pro, cli):
+    """.DSN/KiCad 프로젝트 입력: `--net-names kicad` 면 임포터의 투명 전역 라벨(별칭·자동 넷)을 지워 지역화
+    (`localize_project_guarded`, 넷 핀 분할 대조), `--hidden-labels shrink` 면 남은 투명 라벨 글자를 축소
+    (넷 이름+핀 대조). kicad-cli 가 없으면 아무것도 바꾸지 않고 알린다."""
+    from .kicad_cleanup import localize_project_guarded, shrink_transparent_labels
+    from .kicad_netlist import schematic_net_signature
+
+    def sig(root):
+        return schematic_net_signature(cli, root, opts.outdir)
+    if result.net_names == 'kicad':
+        if not cli:
+            result.net_names = 'keep'
+            emit('net names: keep (no kicad-cli to verify removing importer global labels)')
+        else:
+            loc = localize_project_guarded(pro, sig)
+            result.localize = loc
+            if loc['reverted']:
+                result.net_names = 'keep'
+                emit('net names: keep (removing importer global labels changed connectivity; reverted)')
+            else:
+                kept = f", names kept: {', '.join(loc['kept_names'])}" if loc['kept_names'] else ''
+                emit(f"net names: kicad - {loc['removed']} importer hidden global labels removed "
+                     f"(aliases local, unnamed nets KiCad-named; {len(loc['renamed'])} nets renamed; "
+                     f"net pins verified identical{kept})")
+    else:
+        emit('net names: keep (importer global labels kept; names match PADS/OrCAD)')
+    if opts.hidden_labels == 'shrink':
+        if not cli:
+            emit('hidden labels: not shrunk (no kicad-cli to verify)')
+            return
+        root = os.path.splitext(os.path.abspath(pro))[0] + '.kicad_sch'
+        base = sig(root)
+        originals, total = {}, 0
+        for p in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(pro)), '*.kicad_sch'))):
+            with open(p, encoding='utf-8', newline='') as fh:
+                originals[p] = fh.read()
+            text, n = shrink_transparent_labels(originals[p])
+            if n:
+                total += n
+                with open(p, 'w', encoding='utf-8', newline='') as fh:
+                    fh.write(text)
+        if total and sig(root) != base:
+            for p, t in originals.items():
+                with open(p, 'w', encoding='utf-8', newline='') as fh:
+                    fh.write(t)
+            emit('hidden labels: shrink reverted (netlist changed)')
+        else:
+            emit(f'hidden labels: {total} shrunk to 0.01 mm (invisible in PDF; netlist names+pins verified identical)')
+
+
+def _sync_board_net_names(opts, result, emit, cli, root_sch):
+    """[4b] 출력 보드(.kicad_pcb)의 넷 이름을 최종 회로도 넷리스트에 맞춘다(`--board-net-names schematic`).
+
+    [4] 는 PADS 원래 이름의 보드(메모리)로 비교해 두고, 이 단계는 **출력 파일만** 바꾼다. 바꾼 뒤 보드를
+    다시 읽어 넷마다 회로도에 같은 이름이 있고 보드 패드가 그 넷의 핀(또는 회로도에 없는 패드)인지 센다 —
+    전부 맞으면 Update PCB from Schematic 에서 넷 이름이 바뀌지 않는다. 핀 분할이 바뀌면(있어서는 안 됨)
+    원래 파일로 되돌린다."""
+    board_pcb = result.files.get('board')
+    if not board_pcb or not os.path.isfile(board_pcb):
+        return
+    mode = opts.board_net_names or 'schematic'
+    if mode == 'pads':
+        result.board_sync = {'mode': 'pads'}
+        emit('[4b] board net names: kept as in PADS (--board-net-names pads)')
+        return
+    if not cli:
+        result.board_sync = {'mode': 'schematic', 'skipped': 'no kicad-cli'}
+        emit('[4b] board net names: not synced (no kicad-cli to read schematic netlist)')
+        return
+    from .kicad_board import load_board, board_netlist, board_net_mapping, rename_board_nets
+    from .kicad_netlist import schematic_net_signature
+    try:
+        sch = schematic_net_signature(cli, root_sch, opts.outdir)
+        with open(board_pcb, encoding='utf-8', newline='') as fh:
+            original = fh.read()
+        before = board_netlist(load_board(board_pcb))
+        mapping, unmatched = board_net_mapping(before, sch)
+        refs = rename_board_nets(board_pcb, mapping)
+        after = board_netlist(load_board(board_pcb))
+    except (OSError, RuntimeError) as e:
+        emit(f'[4b] board net names: not synced ({e})')
+        return
+    if sorted(sorted(v) for v in after.values()) != sorted(sorted(v) for v in before.values()):
+        with open(board_pcb, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(original)
+        result.board_sync = {'mode': 'schematic', 'reverted': True}
+        emit('[4b] board net names: reverted (pad connectivity changed — should not happen)')
+        return
+    sch_pins = set().union(*sch.values()) if sch else set()
+    consistent = sorted(k for k, v in after.items()
+                        if k in sch and all(p in sch[k] or p not in sch_pins for p in v))
+    differ = sorted(set(after) - set(consistent))
+    result.board_sync = {'mode': 'schematic', 'renamed': dict(sorted(mapping.items())), 'references': refs,
+                         'unmatched': sorted(unmatched), 'consistent': len(consistent),
+                         'total': len(after), 'differ': differ}
+    emit('')
+    emit(f'[4b] board net names -> schematic: {len(mapping)} renamed ({refs} references), '
+         f'{len(unmatched)} unmatched')
+    emit(f'board nets with the same name as the schematic: {len(consistent)}/{len(after)}'
+         + ('  (Update PCB keeps all net names)' if not differ else f'  differ: {differ[:8]}'))
 
 
 # ---------- KiCad 프로젝트 / .DSN 입력 모드 ----------
@@ -730,16 +846,15 @@ def run_kicad_project(opts, result, emit):
         result.exit_code = 2
         return result
     result.files['root_sch'] = root_sch
-    result.net_names = 'keep'          # 넷 이름은 임포트된 회로도(전역 라벨) 그대로다
+    # 넷 이름: kicad(기본) 이면 4b) 에서 임포터의 투명 전역 라벨(별칭·자동 넷)을 지워 지역화한다 —
+    # 검증할 kicad-cli 가 없으면 keep 으로 남는다(그때 result.net_names 를 고친다).
+    result.net_names = opts.net_names or 'kicad'
     emit('[1]/[2] skipped: no EDIF')
     # 이 모드에서 무시되는 옵션은 조용히 넘기지 않고 한 줄씩 알린다(사용자가 준 값과 실제 동작이
-    # 다른 채로 끝나지 않도록). 프로젝트 이름은 입력 .kicad_pro 의 파일명이 정하고, 넷 이름은
-    # 임포트된 회로도가 전역 라벨을 쓰므로 항상 'keep' 이다.
+    # 다른 채로 끝나지 않도록). 프로젝트 이름은 입력 .kicad_pro 의 파일명이 정한다.
     if opts.kicad_project and opts.project:
         emit(f'project name taken from .kicad_pro: {os.path.splitext(os.path.basename(pro))[0]}; '
              f'--project ignored')
-    if opts.net_names and opts.net_names != 'keep':
-        emit('net names: keep (imported schematics use global labels; --net-names ignored)')
 
     # 자리표시 부품(보드 전용 레퍼런스 추가)은 이 모드에서 아직 지원하지 않는다.
     rez = opts.resolutions or Resolutions()
@@ -851,14 +966,43 @@ def run_kicad_project(opts, result, emit):
     # 그대로 동작) — kicad_stable 이 건드리는 (version …)/generator_version/경로 치환과 겹치지
     # 않는다. ERC/[3]/PDF 보다 먼저 해야 그 결과가 정리된 파일을 반영한다.
     if opts.import_cleanup:
-        from .kicad_cleanup import cleanup_project
-        cleanup = cleanup_project(pro)
+        from .kicad_cleanup import cleanup_project, dedupe_project_guarded
+        from .kicad_netlist import schematic_net_signature
+        # 중복 투명 라벨 제거는 넷 이름까지 바뀌지 않음을 kicad-cli 넷리스트로 대조하며 따로 한다.
+        cleanup = cleanup_project(pro, default_wire_width=opts.default_wire_width, dedupe_labels=False,
+                                  korean_font=opts.korean_font)
+        guard_cli = pick_cli_for_schematic(view.version, opts.kicad_cli)
+        if guard_cli:
+            dd = dedupe_project_guarded(
+                pro, lambda root: schematic_net_signature(guard_cli, root, opts.outdir))
+            cleanup['transparent_removed'] = dd['removed']
+            cleanup['dedupe'] = dd
+        else:
+            cleanup['dedupe'] = None
         result.import_cleanup = cleanup
-        parts = [f"{cleanup['gaps_merged']} hop gaps merged in {cleanup['sheets']} sheets",
+        parts = [f"{cleanup['korean_fixed']} garbled Korean strings restored",
+                 f"Korean font on {cleanup['korean_font_set']} texts",
+                 f"{cleanup['offpage_converted']} off-page connectors -> global labels",
+                 f"{cleanup['gaps_merged']} hop gaps merged in {cleanup['sheets']} sheets",
                  f"{cleanup['labels_moved']} labels snapped to wire ends"]
+        dd = cleanup['dedupe']
+        if dd is None:
+            parts.append('hidden label dedupe skipped (no kicad-cli to verify)')
+        elif dd['reverted']:
+            parts.append('hidden label dedupe reverted (netlist changed)')
+        elif dd['removed']:
+            kept = f", names kept: {', '.join(dd['kept_names'])}" if dd['kept_names'] else ''
+            parts.append(f"{dd['removed']} redundant hidden labels removed "
+                         f"(netlist names+pins verified identical{kept})")
+        if cleanup['wires_normalized']:
+            parts.append(f"{cleanup['wires_normalized']} wires set to default width")
         if cleanup['worksheet']:
             parts.append('blank worksheet set')
         emit('import cleanup: ' + ', '.join(parts))
+
+    # ---- 4c) 넷 이름 범위(--net-names) / 남은 숨은 라벨(--hidden-labels) ----
+    # 둘 다 kicad-cli 넷리스트로 대조할 수 있을 때만 한다(검증 못 하면 바꾸지 않는다).
+    _apply_net_scope_options(opts, result, emit, pro, pick_cli_for_schematic(view.version, opts.kicad_cli))
 
     # ---- 5) kicad-cli: ERC / [3] / PDF ----
     cli_path = pick_cli_for_schematic(view.version, opts.kicad_cli)
@@ -924,6 +1068,7 @@ def run_kicad_project(opts, result, emit):
         if opts.strict_board and ((diff.net_compare is not None and not diff.net_compare.ok)
                                   or diff.only_sch_refs or diff.only_board_refs):
             result.exit_code = max(result.exit_code, 1)
+    _sync_board_net_names(opts, result, emit, cli_path, root_sch)
     return result
 
 
@@ -1019,5 +1164,7 @@ def result_to_json(result: PipelineResult) -> dict:
             'net_names': result.net_names,
             'ref_format': result.ref_format,
             'import_cleanup': dict(result.import_cleanup) if result.import_cleanup else None,
+            'localize': dict(result.localize) if result.localize else None,
+            'board_sync': dict(result.board_sync) if result.board_sync else None,
             'exit_code': result.exit_code,
             'error': result.error}
