@@ -149,6 +149,204 @@ def _net_name_lines(result, lang):
     return L
 
 
+_HIDDEN_KIND_KO = {
+    'alias': 'OrCAD 별칭을 같은 이름의 전역 넷에 이어 주는 라벨',
+    'renamed': '이 넷이 다른 별칭 이름으로 표시되도록 하는 라벨',
+    'wire': '이 배선에 이름을 주는 유일한 라벨',
+    'free': '배선에 붙지 않은 라벨',
+    'local': '이 배선에 시트 안 이름을 주는 유일한 숨은 지역 라벨',
+}
+_HIDDEN_KIND_EN = {
+    'alias': 'joins an OrCAD alias to the global net of the same name',
+    'renamed': 'makes the net show up under another alias name',
+    'wire': 'the only label naming this wire',
+    'free': 'a label not attached to a wire',
+    'local': 'the only hidden local label naming this wire',
+}
+
+
+def _conflict_lines(info, lang):
+    """숨은 라벨 이름 충돌(같은 배선에 다른 이름 둘 = 한 넷으로 합쳐짐) 경고 줄. 없으면 빈 목록."""
+    conf = info.get('conflicts') or []
+    if not conf:
+        return []
+    ko = lang == 'ko'
+    pairs = []
+    seen = set()
+    for c in conf:
+        key = (c.get('name'), '/'.join(c.get('others') or ()), c.get('sheet'))
+        if key not in seen:
+            seen.add(key)
+            pairs.append(key)
+    if ko:
+        L = [f'!! 경고 - 숨은 라벨 이름 충돌 {len(pairs)}건: 같은 배선에 이름이 서로 다른 라벨/전원 심볼이 함께 있음. '
+             'KiCad 에서 한 배선의 이름 둘은 두 넷이 아니라 하나의 넷이므로 두 넷이 합쳐져 있음(ERC 에는 '
+             'multiple_net_names 경고로만 나옴).']
+    else:
+        L = [f'!! WARNING - {len(pairs)} hidden label name conflicts: a hidden label and a power symbol or label with '
+             'ANOTHER name sit on the same wire. In KiCad two names on one wire are ONE net, so two nets are merged '
+             '(ERC only shows a multiple_net_names warning).']
+    for name, others, sheet in pairs[:5]:
+        L.append(f'    {name} = {others} ({sheet})')
+    if len(pairs) > 5:
+        L.append(f'    ... 외 {len(pairs) - 5}건' if ko else f'    ... and {len(pairs) - 5} more')
+    if ko:
+        L.append('    고치는 법: KiCad 에서 편집 > 찾기(Edit > Find)로 다른 쪽 이름을 찾아, 의도하지 않은 숨은 라벨을 지우거나 '
+                 '의도한 전원 심볼을 되돌릴 것. 숨은 라벨이 안 보이면 --hidden-labels show (GUI: "보이게 바꾸기")로 다시 변환하면 보임.')
+        L.append('    참고: 새로 변환한 결과에서도 같은 쌍이 나오면 OrCAD 원본의 그 넷이 이미 이름을 둘 가진 것일 수 있음 '
+                 '(원본 회로도와 대조할 것).')
+    else:
+        L.append('    How to fix: in KiCad use Edit > Find to locate the other name, then delete the unintended hidden '
+                 'label or put the intended power symbol back. --hidden-labels show makes hidden labels visible.')
+        L.append('    Note: if the same pair appears in a fresh conversion, the original OrCAD net may already have '
+                 'carried two names (compare with the source schematic).')
+    return L
+
+
+def _guard_lines(result, lang):
+    """정리 단계의 넷리스트 대조(guard)가 후퇴하거나 되돌렸을 때의 쉬운 설명. 정상(full)이면 빈 목록."""
+    cl = getattr(result, 'import_cleanup', None)
+    g = cl.get('guard') if cl else None
+    if not g:
+        return []
+    ko = lang == 'ko'
+    if not g.get('verified'):
+        return [('임포트 정리: 모든 시도에서 넷리스트가 달라져 정리를 전부 되돌림 - 임포터가 만든 그대로임. '
+                 '배선 모양은 덜 깔끔하지만 연결은 원본과 같음.') if ko
+                else ('import cleanup: every attempt changed the netlist, so all cleanup was reverted - the output is '
+                      'as the importer wrote it. The drawing is less tidy but the connectivity is the original.')]
+    lv = g.get('level')
+    if lv == 'full':
+        return []
+    if ko:
+        what = {'no label snapping': '라벨 위치 맞추기를 뺀', 'safe steps only': '안전한 단계만 남긴'}.get(lv, str(lv))
+        return [f'임포트 정리: 전체 정리를 하면 넷리스트가 달라져서 {what} 정리로 물러나 적용함(넷리스트 동일 확인). '
+                '일부 라벨/배선 모양이 덜 다듬어졌을 수 있음.']
+    return [f"import cleanup: the full cleanup changed the netlist, so it fell back to '{lv}' (netlist verified identical). "
+            'Some labels/wires may be less tidy.']
+
+
+def _dup_alias_lines(result, lang):
+    n = getattr(result, 'duplicate_alias_removed', None)
+    if n is None:
+        return []
+    if lang == 'ko':
+        return [f'중복 별칭 라벨: 같은 배선의 보이는 전역 라벨과 이름이 같은 지역 별칭 라벨 {n}개를 지움'
+                '(넷리스트 동일 확인). ERC same_local_global_label 경고가 줄지만 그림에서 글자가 하나씩 사라짐.']
+    return [f'duplicate alias labels: {n} local alias labels sitting on the same wire as a same-name visible global label '
+            'were removed (netlist verified identical). This removes ERC same_local_global_label warnings, but the '
+            'drawing loses one text each.']
+
+
+def _auto_change_lines(result, lang):
+    """도구가 회로도를 **자동으로** 고친 내용(pipeline._auto_change_items) — 사용자가 놓치지 않게 요약 위쪽에 둔다.
+
+    그대로 둔 오프페이지 커넥터(화면 글자 ≠ 실제 넷 이름)도 여기서 알린다."""
+    items = getattr(result, 'auto_changes', None) or []
+    unconv = ((getattr(result, 'import_cleanup', None) or {}).get('offpage_unconverted')) or []
+    if not items and not unconv:
+        return []
+    ko = lang == 'ko'
+    f = os.path.basename(result.files.get('auto_changes') or 'auto_changes.txt')
+    L = []
+    if items:
+        L.append((f'자동 변경: 도구가 회로도를 {len(items)}가지로 직접 고침(핀 연결은 단계마다 넷리스트로 대조) - '
+                  f'전체 목록은 출력 폴더의 {f}' if ko
+                  else f'automatic changes: the tool edited the schematic in {len(items)} ways (connections verified '
+                       f'with the netlist at each step) - full list in {f} in the output folder'))
+        for it in items:
+            L.append(f"    - {it['ko'] if ko else it['en']}: {it['count']}"
+                     + (f"  (확인: {it['check']})" if ko and it.get('check') else ''))
+    splits = ((getattr(result, 'import_cleanup', None) or {}).get('bus_split') or {}).get('splits') or []
+    if splits:
+        ex = ', '.join(f"{sp['net']}->{len(sp['into'])}" for sp in splits[:4]) + (' ...' if len(splits) > 4 else '')
+        L.append((f'연결이 바뀐 넷 {len(splits)}개({ex}): 임포터가 버스 위 접속점으로 버스 멤버들을 한 넷으로 합쳐 둔 것을 '
+                  '나눔. PCB 와 맞는지 확인할 것.' if ko
+                  else f'{len(splits)} nets split ({ex}): the importer had joined bus members into one net through '
+                       'junctions on the bus. Check against the PCB.'))
+    if unconv:
+        ex = ', '.join(f"'{u['text']}'={u['net']}" for u in unconv[:4]) + (' ...' if len(unconv) > 4 else '')
+        L.append((f'그대로 둔 오프페이지 커넥터 {len(unconv)}개: 화면 글자와 실제 넷 이름이 다름({ex}). OrCAD 원본에서 '
+                  '한 넷에 커넥터 이름이 둘이라, 라벨 이름을 바꾸면 넷이 갈라져 그림으로 둠.' if ko
+                  else f'{len(unconv)} off-page connectors left as drawings: the shown text differs from the net name '
+                       f'({ex}). OrCAD gave the net two connector names; renaming would split the net.'))
+    return L
+
+
+def _hidden_label_lines(result, lang):
+    """.DSN/KiCad 프로젝트 입력에서 정리 뒤 남은 숨은(투명) 전역 라벨과 `--hidden-labels` 처리 결과 설명 줄.
+
+    EDIF 입력(`hidden_labels` 가 None)이면 아무 것도 내지 않는다."""
+    info = getattr(result, 'hidden_labels', None)
+    if not info:
+        return []
+    ko = lang == 'ko'
+    rem = info.get('remaining') or []
+    mode = info.get('mode') or 'keep'
+    L = _conflict_lines(info, lang)
+    placed = info.get('power_symbols_placed') or []
+    if placed:
+        names = ', '.join(f"{d.get('name')}@{d.get('sheet')}" for d in placed[:6]) + (' ...' if len(placed) > 6 else '')
+        L.append((f'전원 심볼 배치: 부품 핀에 바로 얹힌 숨은 전원 라벨 {len(placed)}개를 같은 이름의 전원 심볼로 바꿈({names}). '
+                  '넷 이름·핀 연결이 같음을 확인했고, 이제 화면에 보이는 연결임.') if ko
+                 else (f'power symbols placed: {len(placed)} hidden power labels sitting directly on part pins were replaced '
+                       f'by power symbols of the same name ({names}). Net names and pins verified identical; '
+                       'the connection is now visible.'))
+    if not rem:
+        L.append('숨은 라벨: 정리 뒤 남은 것 없음 - 임포터가 붙인 숨은 라벨은 모두 중복이거나 지역 라벨로 바뀜.' if ko
+                 else 'hidden labels: none left - every hidden importer label was a duplicate or was localized.')
+        return L
+    n = len(rem)
+    keep_names = getattr(result, 'net_names', None) == 'keep'
+    if ko:
+        why = ('넷 이름 유지(keep) 때문에 일부러 남김' if keep_names
+               else '실제 연결을 실어 나르므로 지우면 넷이 끊기거나 이름이 바뀜')
+        L.append(f'숨은 라벨: {n}개 남음 - {why}. KiCad 화면에서는 보이지 않지만 PDF/SVG 에는 검게 찍힘.')
+    else:
+        why = ('kept on purpose by net names keep' if keep_names
+               else 'they carry real connections, so removing one would cut or rename a net')
+        L.append(f'hidden labels: {n} left - {why}. Invisible in KiCad, but printed black in PDF/SVG.')
+    for d in rem[:5]:
+        kind = d.get('kind')
+        alias = d.get('alias')
+        if ko:
+            reason = _HIDDEN_KIND_KO.get(kind, kind or '')
+            if kind == 'renamed' and alias:
+                reason += f"('{alias}')"
+        else:
+            reason = _HIDDEN_KIND_EN.get(kind, kind or '')
+            if kind == 'renamed' and alias:
+                reason += f" ('{alias}')"
+        L.append(f"    {d.get('name')} ({d.get('sheet')}): {reason}")
+    if n > 5:
+        L.append(f'    ... 외 {n - 5}개' if ko else f'    ... and {n - 5} more')
+    applied = info.get('applied', 0)
+    if info.get('reverted'):
+        L.append(('    처리: 시도했으나 넷리스트가 달라져 원복함 - 임포트된 그대로 둠.' if ko
+                  else '    done: tried, but the netlist changed, so it was reverted - kept as imported.'))
+    elif mode == 'show' and applied:
+        L.append((f'    처리: {applied}개를 보이는 전역 라벨로 바꿈(넷 이름·핀 연결이 같음을 확인). '
+                  '그림에는 OrCAD 페이지에 없던 라벨이 늘어남.') if ko
+                 else (f'    done: {applied} made visible as global labels (net names and pins verified identical). '
+                       'The drawing gains labels the OrCAD page did not show.'))
+    elif mode == 'shrink' and applied:
+        L.append((f'    처리: {applied}개의 글자를 0.01 mm 로 줄여 PDF/SVG 에서도 감춤(넷리스트 동일 확인). '
+                  '이 연결은 어디에도 보이는 라벨이 없게 됨.') if ko
+                 else (f'    done: {applied} shrunk to 0.01 mm so PDF/SVG hide them too (netlist verified identical). '
+                       'These connections then have no visible label anywhere.'))
+    elif mode == 'keep':
+        L.append(('    처리: 임포트된 그대로 둠. 바꾸려면 "보이게 바꾸기"(show: PDF 가 화면과 같아지는 대신 '
+                  '그림에 라벨이 늘어남) 또는 "PDF에서도 감추기"(shrink: PDF 에서 사라지는 대신 이 연결에 '
+                  '보이는 라벨이 없어짐)를 고를 것.') if ko
+                 else ('    done: kept as imported. Alternatives: --hidden-labels show (PDF matches the screen, '
+                       'but the drawing gains labels) or --hidden-labels shrink (gone from PDF, but the connection '
+                       'then has no visible label anywhere).'))
+    elif info.get('verified') is None:
+        L.append(('    처리: 적용하지 못함(검증할 kicad-cli 없음) - 임포트된 그대로 둠.' if ko
+                  else '    done: not applied (no kicad-cli to verify) - kept as imported.'))
+    return L
+
+
 def _explain(result, lang='ko'):
     """PipelineResult -> (설명 줄 목록, 확인할 항목 목록). 판정은 결과에 있는 값만 해석한다."""
     ko = lang == 'ko'
@@ -177,6 +375,10 @@ def _explain(result, lang='ko'):
         counts = ''
     L.append((f'입력: {_MODE_KO.get(mode, mode)} - {os.path.basename(src)}' if ko
               else f'input: {_MODE_EN.get(mode, mode)} - {os.path.basename(src)}') + (f' ({counts})' if counts else ''))
+    # 1b) 자동 변경 — 사용자가 확실히 알도록 입력 바로 아래
+    L.extend(_auto_change_lines(result, lang))
+    if (getattr(result, 'import_cleanup', None) or {}).get('offpage_unconverted'):
+        attention.append('오프페이지 글자 ≠ 넷 이름' if ko else 'off-page text != net name')
 
     # 2) [1][2]
     ver = result.verifications or {}
@@ -228,7 +430,12 @@ def _explain(result, lang='ko'):
                   else f'footprint fields: {n_b} from the board, {n_n} from netlist names, {n_e} empty.')
                  + ((' 보드가 없으면 PADS.pretty 라이브러리가 만들어지지 않아 필드 이름이 라이브러리와 연결되지 않음.' if ko
                      else ' Without a board no PADS.pretty library is written, so the names do not resolve to a library.')
-                    if n_n and not result.board else ''))
+                    if n_n and not result.board else '')
+                 + ((f' 보드가 없어 넷리스트의 풋프린트 이름 {result.footprint_names_unset}개는 채우지 않음(가리킬 '
+                     '라이브러리가 없어 KiCad 경고만 생김) - --board 로 PADS 보드를 주면 채움.' if ko
+                     else f' No board, so {result.footprint_names_unset} footprint names from the netlist were left '
+                          'unset (no library to point to, KiCad would only warn) - give --board to fill them.')
+                    if getattr(result, 'footprint_names_unset', 0) else ''))
     diff = result.board_diff
     if diff is not None:
         parts = []
@@ -270,6 +477,15 @@ def _explain(result, lang='ko'):
 
     # 4b) 넷 이름 방침과 보드 넷 이름 동기화(옵션의 결과를 사람이 알아보도록)
     L.extend(_net_name_lines(result, lang))
+    L.extend(_guard_lines(result, lang))
+    L.extend(_dup_alias_lines(result, lang))
+    L.extend(_hidden_label_lines(result, lang))
+    hl = getattr(result, 'hidden_labels', None)
+    if hl and hl.get('conflicts'):
+        attention.append('숨은 라벨 이름 충돌(넷 합쳐짐)' if ko else 'hidden label name conflicts (nets merged)')
+    g = (getattr(result, 'import_cleanup', None) or {}).get('guard')
+    if g and not g.get('verified'):
+        attention.append('임포트 정리 전부 되돌림' if ko else 'import cleanup reverted')
 
     # 5) ERC
     erc = result.erc
@@ -336,6 +552,11 @@ def _explain(result, lang='ko'):
         else:
             L.append('conclusion: no problems. All connectivity checks passed; remaining ERC items are importer artefacts or KiCad conventions unrelated to connectivity.'
                      if erc else 'conclusion: no problems. All checks that ran passed.')
+    n_auto = len(getattr(result, 'auto_changes', None) or [])
+    if n_auto:
+        L[-1] += (f' 단, 도구가 회로도를 {n_auto}가지로 자동 수정했으니 위 "자동 변경" 목록을 확인할 것.' if ko
+                  else f' Note: the tool edited the schematic automatically in {n_auto} ways - review the '
+                       '"automatic changes" list above.')
     return L, attention
 
 

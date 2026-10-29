@@ -108,7 +108,18 @@ STRINGS = {
         'label_board_net_names': '보드 넷 이름:',
         'board_net_names_schematic': '회로도에 맞춤 (권장)',
         'board_net_names_pads': 'PADS 그대로',
-        'chk_hidden_labels': 'PDF에서 숨은 라벨 감추기 (.DSN)',
+        'label_hidden_labels': '남은 숨은 라벨(.DSN):',
+        'hidden_labels_keep': '그대로 두기',
+        'hidden_labels_show': '보이게 바꾸기',
+        'hidden_labels_shrink': 'PDF에서도 감추기',
+        'hexp_keep': ('숨은 라벨은 임포트된 그대로 둠: KiCad 화면에는 안 보이지만 PDF 에는 검게 찍힘(연결은 안전).'),
+        'hexp_show': ('숨은 라벨을 보이는 전역 라벨로 바꿈: 화면과 PDF 가 같아지지만 OrCAD 페이지에 없던 라벨이 '
+                      '그림에 늘어남(넷리스트가 달라지면 자동 원복).'),
+        'chk_dup_alias': '중복 별칭 라벨 지우기 (같은 이름 전역 라벨 옆)',
+        'hexp_dup_alias': ('중복 별칭 라벨 지우기: 같은 배선의 보이는 전역 라벨과 이름이 같은 지역 별칭 라벨을 지움 - '
+                           'ERC same_local_global_label 경고가 사라지지만 그림에서 글자가 하나씩 줄어듦.'),
+        'hexp_shrink': ('숨은 라벨 글자를 0.01 mm 로 줄임: PDF 에서도 사라지지만 그 연결에는 보이는 라벨이 '
+                        '어디에도 없게 됨(넷리스트가 달라지면 자동 원복).'),
         'label_korean_font': '한글 글꼴:',
         'netexp_kicad_schematic': ('회로도는 KiCad 방식 이름(예: DTR# -> /USB/DTR#, 이름 없는 넷 -> Net-(C7-Pad2)), '
                                    '변환된 보드도 같은 이름으로 맞춤 -> Update PCB 시 넷 이름 변경 없음. '
@@ -292,7 +303,20 @@ STRINGS = {
         'label_board_net_names': 'Board net names:',
         'board_net_names_schematic': 'Match schematic (recommended)',
         'board_net_names_pads': 'Keep PADS',
-        'chk_hidden_labels': 'Hide hidden labels in PDF (.DSN)',
+        'label_hidden_labels': 'Leftover hidden labels (.DSN):',
+        'hidden_labels_keep': 'Leave as is',
+        'hidden_labels_show': 'Make visible',
+        'hidden_labels_shrink': 'Hide in PDF too',
+        'hexp_keep': ('Hidden labels stay as imported: not visible in KiCad but printed black in PDF '
+                      '(connections are safe).'),
+        'hexp_show': ('Hidden labels become visible global labels: screen and PDF agree, but the drawing gains '
+                      'labels the OrCAD page did not show (reverted automatically if the netlist changes).'),
+        'chk_dup_alias': 'Remove duplicate alias labels (next to a same-name global label)',
+        'hexp_dup_alias': ('Remove duplicate alias labels: a local alias label on the same wire as a visible global label '
+                           'of the same name is deleted - ERC same_local_global_label warnings go away, but the '
+                           'drawing loses one text each.'),
+        'hexp_shrink': ('Hidden label text is shrunk to 0.01 mm: gone from PDF too, but those connections then '
+                        'have no visible label anywhere (reverted automatically if the netlist changes).'),
         'label_korean_font': 'Korean font:',
         'netexp_kicad_schematic': ('Schematic uses KiCad-style names (e.g. DTR# -> /USB/DTR#, unnamed net -> Net-(C7-Pad2)); '
                                    'the converted board is renamed to match -> Update PCB changes no net names. '

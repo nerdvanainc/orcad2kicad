@@ -4,20 +4,73 @@
 
 **Made and maintained by [Nerdvana Inc.](https://www.nerdvana.co.kr)** · MIT license · [Notice](NOTICE.en.md)
 
-**orcad2kicad** converts OrCAD Capture schematics — an EDIF 2.0.0 export or a
-native OrCAD `.DSN` file — into a real, stable KiCad 10.0 project, and
-verifies the result against a PADS-exported reference netlist so nets aren't
-silently dropped or miswired.
+**orcad2kicad** turns OrCAD Capture schematics (a native OrCAD `.DSN` file or an
+EDIF 2.0.0 export) into a project you can **keep working on in stable KiCad 10.0**,
+links it to your existing PADS board, and checks it against a reference netlist
+to confirm that no connection changed.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests](https://github.com/nerdvanainc/orcad2kicad/actions/workflows/tests.yml/badge.svg)](https://github.com/nerdvanainc/orcad2kicad/actions/workflows/tests.yml)
 [![Latest release](https://img.shields.io/github/v/release/nerdvanainc/orcad2kicad)](https://github.com/nerdvanainc/orcad2kicad/releases)
 
-Teams migrating away from OrCAD run into the same problem: the conversion
-finishes, but now someone has to eyeball every net to make sure nothing broke.
-orcad2kicad doesn't stop at moving EDIF/DSN data into a KiCad schematic — it
-folds PADS netlist verification into the pipeline so missing or miswired nets
-are caught automatically, not by hand.
+KiCad nightly (10.99) now ships an OrCAD importer that reads `.DSN`. Its output
+*opens*, but it is not ready to work with: stable KiCad 10.0 cannot load it, wires
+are cut at every crossing, off-page connectors survive only as drawings, thousands
+of labels that are invisible on screen print black in PDFs, and nothing links it to
+the PCB. orcad2kicad takes the importer's result, cleans all of that up, compares
+the netlist before and after every cleanup step to **prove connectivity did not
+change**, and then wires in the PADS board and footprints.
+
+## Why not just use the KiCad nightly importer?
+
+If you only want to look at the design, the nightly importer is enough. If you
+want to **keep designing and carry on to the PCB**, these are the differences —
+measured on the public Raspberry Pi Compute Module IO Board V3 design (`.DSN`,
+3 pages, IPC-D-356 reference netlist with 152 nets):
+
+| | KiCad nightly importer alone | orcad2kicad |
+|---|---|---|
+| Opens in stable KiCad 10.0 | **No** ("Failed to load schematic", 10.99 format) | Yes (rebuilt as root sheet + sub-sheets in 10.0 format) |
+| ERC violations | **1,259** (dangling wire ends 687, off-grid endpoints 432, same local/global label 126, …) | **68** (no power flag 14, same local/global label 54) — with `--hidden-labels show --duplicate-alias-labels remove` on, **14** (only missing power flags) |
+| Wires at crossings | cut at every crossing, gap filled with graphic lines | merged into one wire (285 places) |
+| Off-page connectors | red drawing + text + hidden label | KiCad global labels (108) |
+| Hidden (transparent) labels | 1,335 — invisible on screen, **printed black in PDF/SVG** | 1,071 duplicates removed; the 4 left are listed with the reason, and you choose what to do |
+| Net names | page aliases and unnamed nets all joined through global labels | KiCad style (local labels) or keep the PADS/OrCAD names — your choice |
+| Drawing and text | KiCad default frame over the OrCAD title block, fixed wire width, broken Korean | blank frame, KiCad default wire width, Korean restored with a Korean font |
+| Netlist (vs IPC-D-356) | 152/152 match | 152/152 match — same connectivity before and after cleanup |
+
+What the importer does not do at all:
+
+- **PADS board link** — imports a PADS Layout ASCII board, extracts its footprints
+  into `PADS.pretty`, fills the schematic footprint fields and compares board and
+  schematic ([4]). Board net names are aligned with the schematic, so "Update PCB
+  from Schematic" does not rename nets.
+- **Proof that the conversion is right** — net-by-net comparison with a PADS `.asc`
+  or IPC-D-356 reference netlist ([3]). Every cleanup step is checked with a
+  before/after kicad-cli netlist and undone if anything differs.
+- **Warning for invisible net merges** — when a hidden label and a power symbol or label
+  with another name share a wire, KiCad silently joins the two nets (ERC shows a single
+  warning). orcad2kicad finds and reports this, and turns hidden power labels sitting
+  directly on part pins into visible power symbols. You can also re-run a KiCad project
+  you have already edited through `--kicad-project` to check it.
+- **Bus nets the importer merged are split back** — where a wire touches a bus without a
+  bus entry, the importer puts a junction that KiCad reads as a real connection, joining
+  every data line on that bus into one net. orcad2kicad removes those junctions (kept only
+  if the netlist just splits), redraws the touch points with KiCad bus entries and lists
+  every split net by name.
+- **Every automatic change is announced** — the log, an `auto_changes.txt` in the output
+  folder and the result summary list what the tool changed and what to check; changes
+  that alter connections come first.
+- **Nightly without installing it** — the nightly needed only to read `.DSN` is
+  downloaded from the official site and just unpacked. The result is in 10.0 format,
+  so everything afterwards happens in stable KiCad.
+- **Readable results** — verification and ERC grouped by type, with an explanation of
+  whether what is left comes from the original design or from the conversion. GUI
+  (Korean/English), CLI and an MCP server.
+
+*Measured with orcad2kicad (2026-10-29 development build, in the next release) and the KiCad 10.99 nightly importer. ERC was run
+with the kicad-cli that can open each result (nightly for the importer output,
+stable 10.0.7 for orcad2kicad's).*
 
 ## Screenshots
 
@@ -94,7 +147,7 @@ Trademarks, the reverse-engineering statement, what is sent to an AI backend and
   Verify the download before trusting it:
 
   ```powershell
-  Get-FileHash orcad2kicad-1.0.4-win64.zip -Algorithm SHA256
+  Get-FileHash orcad2kicad-1.0.5-win64.zip -Algorithm SHA256
   ```
 
   Compare the output against the value in `SHA256SUMS.txt`.
@@ -202,7 +255,7 @@ switched from its language menu. The CLI's output is English/ASCII.
 
 ## Testing
 
-The full regression suite (about 420 tests) runs against reference designs
+The full regression suite (about 590 tests) runs against reference designs
 that cannot be published, so the sample-dependent tests are not part of this
 public tree. The sample-independent tests that are included — synthetic
 cases, the result explanation, GUI language tables, branding, and release

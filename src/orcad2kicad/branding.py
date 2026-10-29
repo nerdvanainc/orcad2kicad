@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-VERSION = '1.0.4'
+VERSION = '1.0.5'
 COMPANY = 'Nerdvana Inc.'
 SITE_URL = 'https://www.nerdvana.co.kr'
 SITE_SHORT = 'www.nerdvana.co.kr'

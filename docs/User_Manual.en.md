@@ -297,12 +297,15 @@ start, so this fallback only applies to references whose value is **empty**, in 
      and an issue is left per reference: `"{REF}: footprint {name} from netlist has no PADS library
      entry"` — meaning there's no decal with this name in the PADS library, so check/assign it
      directly in KiCad.
-   - **If only `--netlist` is given, without `--board`**, this step alone fills the field (supports
-     running with a netlist only, without board linking) — since there's no board decal to compare
-     against in this case, no per-reference issue is left (it would be repetitive and obvious that
-     it's "not in the library" for all of them); instead a single summary line is left:
-     `"footprints filled from netlist only (no board): N refs; names are bare OrCAD footprint
-     names without a library"`.
+   - **If only `--netlist` is given, without `--board`, the field is not filled** (changed
+     2026-10-29). Without a board no footprint library (`PADS.pretty`) is written for the name to point
+     to, so a bare name such as `0603` only produced KiCad ERC `footprint_link_issues` ("The current
+     configuration does not include the footprint library ''"), one per part (158 in one measured
+     design). The field is left empty and a single summary line is left: `"footprints left empty (no
+     board): N refs have a footprint name in the netlist but there is no footprint library to point to;
+     give --board (PADS board) to fill them"`. The log line gets `(N netlist names not used: no board
+     library)` and the result summary says so too (`PipelineResult.footprint_names_unset`). Give the
+     PADS board (`--board`) to fill footprints.
 3. **If neither exists** (not on the board, and not in the netlist either, or its name there is
    empty), the field is left empty and an issue is left: `"{REF}: no footprint source (not on
    board, not in netlist)"`.
@@ -577,7 +580,7 @@ grayed out (exactly one of the three is passed to the pipeline — see Chapters 
 | [Prepare KiCad nightly portable (no install)] button | Prepares the latest KiCad nightly with no installation, just archive extraction, and auto-fills the "kicad-cli path" field above once done (Chapter 0). The gray hint text beside it, **"The nightly (10.99+) is needed only for `.DSN` import. The result is saved in the stable KiCad 10.0 format,"** tells you when the nightly build is actually needed — if you only use EDIF or an already-imported KiCad project, you don't need to click this button. |
 | Net names: KiCad style (recommended) / Keep PADS/OrCAD names | Default is **KiCad style**: no artificial global labels. OrCAD page aliases (`DTR#` ...) stay local labels, so KiCad net names become `/USB/DTR#` (with the sheet path), and unnamed nets get KiCad auto names like `Net-(C7-Pad2)`. **Keep PADS/OrCAD names** (`keep`) is the old behaviour: aliases and unnamed nets are promoted to global labels (square flags) so the names stay identical. See "Choosing the net-name options" below. |
 | Board net names: Match schematic (recommended) / Keep PADS | Only meaningful with a PADS board. **Match schematic** (default) renames the output board nets to the schematic net names so Update PCB from Schematic changes no net names. **Keep PADS** leaves the PADS names (nets whose schematic name differs may be renamed by Update PCB). |
-| Hide hidden labels in PDF (.DSN) | Enabled for `.DSN`/KiCad project input only. Leftover transparent importer labels are plotted black in PDF/SVG; checking this shrinks them to 0.01 mm (`--hidden-labels shrink`). Off by default. |
+| Leftover hidden labels (.DSN) | Three-way choice, enabled for `.DSN`/KiCad project input only. After cleanup only transparent importer labels that carry real connections remain; they are invisible in KiCad but plotted black in PDF/SVG. **Leave as is** (default, `keep`): as imported. **Make visible** (`show`): turn them into visible global labels, so screen and PDF agree, but the drawing gains labels (labels that had no visible text in OrCAD appear as small light-grey labels). **Hide in PDF too** (`shrink`): text shrunk to 0.01 mm so PDF hides them, but those connections then have no visible label anywhere. `show`/`shrink` revert automatically if the netlist changes. Even with `keep`, hidden labels are turned so they no longer overlap wires in PDF. The chosen look is also described in the blue explanation line below. |
 | Korean font | Font assigned to texts containing Korean. Default `Malgun Gothic`; empty = do not assign (`--korean-font`). |
 | Net-name explanation line (blue text under the input area) | Shows the **consequence of the current combination** in one or two lines and updates as you change a selection. Without a board only the net-names explanation is shown. |
 | PDF output | If checked, also produces a schematic PDF via kicad-cli. |
@@ -596,7 +599,155 @@ Safeguards: before/after every KiCad-style change the kicad-cli netlist **pin pa
 (otherwise the net's name is protected or the change reverted); the board sync re-reads the board and counts
 nets whose (name, pins) equal the schematic. Without kicad-cli these steps are skipped and logged.
 
-Where to see it: the `net names: kicad|keep` log line (plus `aliases localized: N hidden global labels removed`
+**Leftover hidden labels (`.DSN`/KiCad project input)**: the importer puts transparent global labels on wires.
+They are invisible in KiCad but plotted black in PDF/SVG. Duplicates (for example a label sitting on a
+power-symbol pin of the same name, or a hidden local label next to a same-name local label) are removed
+automatically. Public Raspberry Pi CMIO V3 example: of 1,335 hidden labels left by the importer, 1,071 were
+duplicates, 108 were off-page connectors (turned into visible global labels) and 152 went with net-name cleanup.
+The rest (4 there) carry real connections - removing one would cut or rename a net - so they stay. Each
+remaining label has a kind: `alias` (joins an OrCAD alias to the global net of the same name), `renamed` (makes the
+net show up under another alias name), `wire` (the only label naming this wire), `free` (not on a wire),
+`local` (the only hidden local label naming this wire).
+
+Two more things happen automatically, even with `keep`:
+
+- *Second duplicate pass after net-name cleanup.* Some hidden labels were protected by name during the first pass;
+  once net-name cleanup (`--net-names kicad`) has run, those that are now redundant are removed in a second,
+  netlist-verified pass. Log: `hidden labels: N more redundant hidden labels removed after net-name cleanup ...`.
+- *Hidden labels no longer overlap wires in PDF.* A hidden label is invisible in KiCad but printed black in PDF/SVG.
+  The tool turns it to point away from its wire, or moves it along the same wire to a free end (the connection
+  point does not change; netlist-verified). The default stays `keep`. Public Raspberry Pi CMIO V3 example: 235 labels
+  turned away from their wire.
+
+Choose what to do with `--hidden-labels` (GUI: "Leftover hidden labels"):
+
+| Choice | Result | Pros | Cons |
+|---|---|---|---|
+| `keep` (Leave as is, default) | As imported | Safest | Invisible in KiCad, but printed black in PDF/SVG |
+| `show` (Make visible) | Becomes a visible global label (an OrCAD alias label on the same wire is used; a mid-wire one moves to the free wire end). Labels that had **no visible text in OrCAD** are drawn as small light-grey labels (RGB 150 grey, 0.9 mm text, style `subtle`); OrCAD alias text that was already visible stays a normal label. Shown labels point away from the wire and their text is capped at 1.27 mm, so neighbours at 2.54 mm pitch do not overlap | Screen and PDF agree, the connection name is visible; fewer ERC `same_local_global_label` warnings and `unconnected_wire_endpoint` (3 and 1 in that design) | The drawing gains labels the OrCAD page did not show |
+| `shrink` (Hide in PDF too) | Text shrunk to 0.01 mm | Gone from PDF/SVG too | The connection then has no visible label anywhere |
+
+For the normal look instead, use `--hidden-label-style normal` on the CLI (default `subtle`; the GUI and MCP always use `subtle`).
+
+`show`/`shrink` are applied only if the kicad-cli netlist (net names and pins) stays identical, otherwise reverted;
+without kicad-cli they are not applied.
+
+How to read the log:
+
+| Log line | Meaning |
+|---|---|
+| `hidden labels: none left (...)` | Every hidden importer label was a duplicate or localized. Nothing to do |
+| `hidden labels: N left - <reason>; invisible in KiCad, printed black in PDF/SVG: SPI_MOSI (P01_MAIN, alias), ...` | N labels remain; each entry is `(page file, kind)` (`renamed` adds `'alias name'`), up to 8 listed. "carry real connections" is the normal case; "kept on purpose by --net-names keep" means the keep mode leaves them deliberately |
+| `hidden labels: kept as imported. Options: ...` | `keep` was selected; lists the alternatives |
+| `hidden labels: N made visible as global labels (netlist names+pins verified identical)` | `show` applied and verified |
+| `hidden labels: N shrunk to 0.01 mm (invisible in PDF; ...)` | `shrink` applied and verified |
+| `hidden labels: <mode> reverted (netlist changed) - kept as imported` | The change altered the netlist, so it was undone |
+| `hidden labels: <mode> not applied (no kicad-cli to verify)` | No kicad-cli to verify with, so nothing was changed |
+| `hidden labels: N more redundant hidden labels removed after net-name cleanup ...` | Second duplicate pass after net-name cleanup (netlist-verified). Nothing to do |
+
+The Result tab summary explains the same (count, up to 5 names, reason, what was done), and the
+`hidden_labels` object in MCP/JSON results carries `mode`, `remaining[{name, at, kind, alias, sheet}]`, `applied`,
+`verified`, `reverted`, `conflicts[{name, others, at, with, sheet}]` and `power_symbols_placed[{sheet, name, at, ref}]`.
+
+**Reading the automatic-change notice** (`.DSN`/KiCad project input, cleanup on - the default)
+
+The tool never changes the schematic silently. Everything it changed automatically is announced in three places:
+
+1. **Log block `AUTO CHANGES:`** - a line `AUTO CHANGES: the tool changed the schematic automatically in N ways ...`
+   followed by one `  - N ...` line per item (ASCII).
+2. **`auto_changes.txt`** in the output folder (Korean text, UTF-8 with BOM): the items with counts, what to check
+   for each, the list of renamed nets (`old -> new`) and the off-page connectors left as drawings. Opens directly in
+   Notepad.
+3. **Result summary**: an "automatic changes" section right under the input line, plus a tail sentence on the
+   conclusion line. Off-page connectors left as drawings also appear under "items to check". JSON/MCP results carry
+   `auto_changes`.
+
+Public Raspberry Pi CMIO V3 example (default options, 2026-10-28 development build), 9 items: 108 off-page
+connector drawings -> global labels, 285 hop gaps merged, 117 labels moved to free wire ends, 235 hidden labels turned
+away from their wire, 1,071 redundant hidden labels removed, 941 wires set to the default width, blank worksheet, 152
+importer hidden global labels removed (net names: kicad), 84 nets renamed. ERC then shows 68 findings
+(`power_pin_not_driven` 14, `same_local_global_label` 54) and 4 hidden labels are left (`CD0_SCL`, `CD0_SDA`,
+`CD1_SCL`, `CD1_SDA`, kind `alias`).
+
+What to check:
+
+- **Renamed nets (`old -> new`)**: if the board, BOM or other documents use the old name, compare with the new one.
+  With a board given, `[4b]` tells you whether the board's names were aligned with the schematic.
+- **`WARNING off-page connector ... left as a drawing`**: follow the Troubleshooting row below.
+- The other items (wire width, hop-gap merges, label moves, duplicate removal) are netlist-verified to keep the
+  connectivity identical; just look at the drawing. Items you dislike can be switched off with
+  `--no-import-cleanup`, `--keep-wire-width`, `--net-names keep` and so on.
+
+**Netlist-checked cleanup and label tidy** (all on by default; skipped without kicad-cli, which is logged)
+
+- *Every cleanup step is verified.* For `.DSN`/KiCad project input the cleanup compares the kicad-cli netlist
+  (**net names and pins**) before and after. If it differs, the sheets are restored and the cleanup is retried
+  without label snapping, then with the safe steps only, then reverted entirely. A fallback or revert shows up as a
+  prefix on the `import cleanup:` log line (`netlist changed with the full cleanup, applied '...' instead` /
+  `REVERTED - every attempt changed the netlist`) and in plain words in the result summary
+  (`import_cleanup['guard'] = {level, verified, tried}`). Background: label snapping used to treat a bus endpoint
+  as a free wire end and could move a net label onto a bus, merging the bus member nets (2 of 113 private
+  real-world test designs; now 0). The check is the safety net should anything similar appear again.
+- *Junctions where a wire touches a bus (the one cleanup that changes connections).* In OrCAD a wire drawn
+  straight onto a bus, without a bus entry, is only a drawing; the connection is made by the net alias on the wire
+  (the bus member name, e.g. `DATA3`). The nightly importer puts a **junction** at that touch point, and KiCad
+  treats a junction on a bus as a real connection, so every wire touching the bus that way ends up in **one net**
+  (e.g. `DATA1`...`DATA7` all in `DATA1`). These junctions are removed so the nets split back. Junctions
+  where buses branch (a bus T) and junctions between wires are left alone.
+  - Safety: the result is kept only if the kicad-cli netlist **only split** (every net afterwards is part of one
+    net from before); if nets merge or a pin moves to another net, the sheets are restored. Skipped without kicad-cli.
+  - Notice: because connections change, it is listed **first** under `AUTO CHANGES` as `CONNECTIONS CHANGED`, each
+    split net gets `WARNING net 'DATA1' split into DATA1, DATA2, ...` (also in the issues tab),
+    `auto_changes.txt` lists them under `[나뉜 넷 - 연결이 바뀜]`, and the result summary shows "N nets split".
+  - Measured: 2 of 113 private real-world designs had it; after the removal both matched their PADS reference
+    netlist 100% (before, 7 to 17 nets were merged into one). The other 111 had no such junction.
+  - Bus entries: a wire end that lost its junction is, in KiCad terms, not connected to the bus and would raise ERC
+    `unconnected_wire_endpoint`. So every wire end touching a bus without an entry (including ends that never had a
+    junction) is **redrawn KiCad style**: the wire is shortened by 2.54 mm at the bus end and a 45-degree bus entry
+    runs from the new end to the bus. A 2.54 mm comb gets entries all pointing the same way. Connections are made by
+    the wire's label name and do not change; the result is kept only if the netlist (names+pins) is identical (else
+    only the entries are reverted). An end is left alone if the wire is shorter than the entry, if another wire,
+    pin, junction or label sits at that point, or if another wire passes the shortened end. Listed in the auto
+    changes as "wire ends touching a bus redrawn with bus entries" (`import_cleanup['bus_split']['entries_added']`).
+  - To keep the importer result (no junction removal, no entries; nets stay merged): `--keep-bus-junctions`.
+- *Hidden power labels on part pins (H1).* A hidden power-name label (for example `GND`) sitting directly on a
+  part pin with no power symbol there is replaced by a same-name power symbol (netlist verified, reverted if it
+  differs). Log: `hidden labels: N hidden power labels sitting on part pins replaced by power symbols (...)`;
+  `hidden_labels['power_symbols_placed']`.
+- *Hidden label name conflicts (H2).* If a hidden label and a power symbol or visible global label with ANOTHER
+  name sit on the same wire, KiCad joins the two names into ONE net; ERC shows only a `multiple_net_names`
+  warning. The tool logs `WARNING hidden label name conflicts: N - A = B (sheet)`, adds a warning section to the
+  result summary (the conclusion becomes "items to check"), and lists it in the GUI Issues tab
+  (`hidden_labels['conflicts']`). See Troubleshooting for what to do.
+- *Off-page connectors.* The importer draws an OrCAD off-page connector as red chevron strokes plus a text and a
+  transparent global label on the wire end. The tool replaces these with one real global label. Besides the double
+  chevron it now recognises the **single-chevron shape** (2.54 mm stem + 2 diagonal strokes), labels whose importer
+  angle points the wrong way or is 0 on vertical connectors (the label's own angle is tried first, then the other
+  directions, so a neighbour's drawing is never taken), and vertical connectors whose horizontal text is centred.
+  **When the connector text differs from the hidden label (= real net) name** - OrCAD gave the net two connector
+  names - it is NOT converted, because renaming split nets in testing (6 of 8 test designs). It stays a drawing and
+  is reported as `WARNING off-page connector '...' (...) left as a drawing: its net is '...'` in the log, the issue
+  list, the result summary and `auto_changes.txt` (`import_cleanup['offpage_unconverted']`).
+- *Pin numbers that overflow their pin.* The importer copies pin-number text of e.g. 1.7 mm, so long numbers spill
+  over pin names and labels. A number longer than its pin is shrunk to 70% of the pin length (minimum 0.6 mm), in
+  both the sheets' embedded `lib_symbols` and the `.kicad_sym` library so ERC `lib_symbol_mismatch` does not
+  appear. KiCad cannot move pin numbers per pin, so size is the only lever (`import_cleanup['pin_numbers_fitted']`).
+- *Labels sitting directly on part pins.* A label on a pin end without a wire had no justify, so its text was
+  centred on the pin end, half over the pin. Its rotation/justify now face away from the symbol body; the
+  connection point is unchanged (`import_cleanup['pin_labels_faced']`).
+- *Label tidy.* For EDIF output, alias labels are moved to the free wire end (`label tidy: N alias labels moved to
+  the free wire end`). On both paths snapping also handles a label at the pin end of a wire that continues past
+  it, and off-page global labels that fall 0.254 mm short of the wire end are moved onto it
+  (`import_cleanup['globals_snapped']`).
+- *`--duplicate-alias-labels {keep,remove}` (default `keep`; GUI: "Remove duplicate alias labels").* OrCAD users
+  often draw an alias next to an off-page connector of the same name. `remove` deletes the local alias label that
+  sits on the same wire as a visible global label of the same name. Pro: the ERC `same_local_global_label` warnings
+  disappear. Con: the drawing loses one text each. Netlist-verified, reverted if it differs; applies to EDIF and
+  `.DSN` (`result.duplicate_alias_removed`, log lines start with `label tidy:`).
+- In `--net-names kicad` mode, hidden *local* labels are removed too (pin partition verified). In the leftover list
+  the kind `local` means "the only hidden local label naming this wire".
+
+Where to see it: the `net names: kicad|keep` log line (plus `net names: kicad - N importer hidden labels removed`
 for `.DSN`/KiCad project input), `[4b] board net names -> schematic: N renamed, M unmatched` with
 `board nets with the same name as the schematic: K/K  (Update PCB keeps all net names)`, and the Result tab
 summary (removed hidden labels, up to 3 rename examples, differing nets). `[4]` still compares the board
@@ -762,7 +913,9 @@ re-check as the version advances):
 | `--board BOARD` | PADS board (`.asc` is imported via kicad-cli; `.kicad_pcb` is read as-is) | none |
 | `--net-names {kicad,keep}` | `kicad`: KiCad-style names without artificial global labels (aliases local, unnamed nets `Net-(...)`; for `.DSN`/KiCad project the importer's hidden global labels are removed after a netlist check). `keep`: keep PADS/OrCAD names via global labels (old behaviour) | `kicad` |
 | `--board-net-names {schematic,pads}` | With `--board`: `schematic` renames output board nets to the schematic names (no renames in Update PCB); `pads` keeps PADS names | `schematic` |
-| `--hidden-labels {keep,shrink}` | `.DSN`/KiCad project only. `shrink` makes leftover transparent labels 0.01 mm so they are not plotted black | `keep` |
+| `--duplicate-alias-labels {keep,remove}` | `remove` deletes a local alias label that sits on the same wire as a visible global label of the same name (OrCAD habit: alias next to an off-page connector). Removes ERC `same_local_global_label` warnings, but the drawing loses one text each. Netlist-verified, reverted if it differs. EDIF and `.DSN` | `keep` |
+| `--hidden-labels {keep,show,shrink}` | `.DSN`/KiCad project only. What to do with transparent labels left after cleanup (they carry real connections). `keep`: as imported (plotted black in PDF/SVG). `show`: turn them into visible global labels (the drawing gains labels). `shrink`: text 0.01 mm so PDF/SVG hide them too (the connection then has no visible label). `show`/`shrink` are netlist-verified and reverted if the netlist changes | `keep` |
+| `--hidden-label-style {subtle,normal}` | Look of labels revealed by `--hidden-labels show` (CLI only; GUI/MCP use `subtle`). `subtle`: labels with no visible text in OrCAD become small light-grey labels (0.9 mm text), visible alias text stays a normal label. `normal`: all normal labels | `subtle` |
 | `--korean-font NAME` | Font for texts containing Korean (empty = do not assign) | `Malgun Gothic` |
 | `--strict-board` | Exit code 1 if [4] board vs. schematic comparison FAILs or references differ | off (information only, no effect on exit code) |
 | `--nightly-format` | `--kicad-project`/`--dsn` only. Leaves the nightly importer's output **as-is** instead of restructuring it into the stable KiCad 10.0 format (root sheet + sub-sheets, Phase 3-C-2) (opening that result and running [3]/ERC on it will again require the nightly kicad-cli) | off (default always restructures into the stable format) |
@@ -1024,6 +1177,8 @@ multi-sheet hierarchy and the same `PADS:<decal>`-filled footprints).
 
 | Symptom | Cause/how to check | Fix |
 |---|---|---|
+| A power symbol's net name looks wrong / two different power rails are merged (for example an LDO input and output, ERC `multiple_net_names`) | A hidden label and a power symbol (or visible global label) with different names on the same wire make KiCad join them into ONE net. Only the power symbol is visible, so it is easy to miss. Example: a power symbol was swapped to `AVCC_3.3V` while a hidden `AVCC_5V` label stayed on the same wire, so the two rails became one. The tool reports `WARNING hidden label name conflicts: ...` in the log, a warning section in the result summary and the GUI Issues tab | In KiCad use Edit > Find to locate the other name listed in the warning, then delete the unintended hidden label or put the intended power symbol back. If the hidden label is not visible, convert again with `--hidden-labels show` (GUI "Make visible"). Tip: you can re-run your hand-edited project with `--kicad-project PROJECT.kicad_pro` to get the same warning as a check. Note: if the same pair shows up in a fresh conversion, the original OrCAD net may already have carried two names - compare with the source schematic. |
+| Log/summary shows `WARNING off-page connector '...' (...) left as a drawing: its net is '...'` / the visible connector text differs from the real net name | The text drawn on the off-page connector (for example `CS_A`) differs from the hidden label at the wire end (the net name KiCad knows, for example `NET_B`): OrCAD gave the net two connector names. Making a global label from the text would split the net, so the tool **left it as a drawing** (the connection itself is kept by the hidden label, so the netlist is correct) | Just be aware that the visible connector text and the net name differ. To make the real name visible, add a global label with the real net name next to the connector in KiCad, or reveal the hidden label with `--hidden-labels show`. The list is under "off-page connectors left as drawings" in `auto_changes.txt`. Also check in the original OrCAD design whether the two names are intended. |
 | A "kicad-cli not found" message, with [3] verification/ERC/PDF/board import all skipped | kicad-cli isn't on PATH or in a standard install location | Install KiCad, or specify it directly via `--kicad-cli PATH` (CLI)/the "kicad-cli path" field (GUI)/the `KICAD_CLI` environment variable. The `find_kicad_cli` MCP tool or the GUI's auto-fill on startup can confirm the actually detected path. |
 | EDIF parse error (`error: cannot read ...` or exits with an exception) | (1) OrCAD exported something other than EDIF 2.0.0, (2) the file is truncated/corrupted, (3) an EDIF construct the parser doesn't handle (see the carried-over issue list in the document) | Re-export following the steps in section 4.2. Use `tools/inspect_edif.py <file> "<cell name>"` to dump a specific cell's structure and see where it gets stuck. If reproducible, file it as an issue (with specifics on which cell/construct). |
 | Net mismatch (DIFF/ONLY_OURS/ONLY_REF in [1]/[2]/[3]) | The schematic and PADS netlist are from different design versions, or it's a genuine conversion bug | Narrow down the cause using the table in Chapter 7: **ONLY_REF** (in the reference but missing from ours) is the most serious — an entire net is missing, so start by checking the EDIF reader's issue list (`--issues`). For **DIFF**, narrow down which REF.PIN differs (the `missing`/`extra` columns) and cross-check that part/net directly in EDIF. **ONLY_OURS** usually means the netlist is stale or we split something incorrectly — if re-exporting the reference netlist still doesn't match, file it as a bug. |

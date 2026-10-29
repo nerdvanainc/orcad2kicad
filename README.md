@@ -4,19 +4,64 @@
 
 **제작·유지보수: [Nerdvana Inc.](https://www.nerdvana.co.kr) (㈜너드바나)** · 라이선스 MIT · [고지](NOTICE.md)
 
-**orcad2kicad**는 OrCAD Capture 회로도(EDIF 2.0.0 익스포트 또는 OrCAD 네이티브
-`.DSN` 파일)를 정식(stable) KiCad 10.0 프로젝트로 변환하고, PADS에서 내보낸
-기준 넷리스트와 대조하여 넷이 빠지거나 잘못 연결되지 않았는지 검증하는
-오픈소스 도구입니다.
+**orcad2kicad**는 OrCAD Capture 회로도(OrCAD 네이티브 `.DSN` 또는 EDIF 2.0.0
+익스포트)를 **정식(stable) KiCad 10.0에서 바로 작업할 수 있는 프로젝트**로 만들고,
+기존 PADS 보드와 연결하고, 기준 넷리스트와 대조해 연결이 하나도 바뀌지 않았음을
+확인해 주는 오픈소스 도구입니다.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests](https://github.com/nerdvanainc/orcad2kicad/actions/workflows/tests.yml/badge.svg)](https://github.com/nerdvanainc/orcad2kicad/actions/workflows/tests.yml)
 [![Latest release](https://img.shields.io/github/v/release/nerdvanainc/orcad2kicad)](https://github.com/nerdvanainc/orcad2kicad/releases)
 
-OrCAD에서 KiCad로 마이그레이션하려는 팀이 겪는 가장 큰 문제는 "변환은 됐는데
-이게 맞게 됐는지 눈으로 다 확인해야 하는" 것입니다. orcad2kicad는 EDIF/DSN을
-KiCad 회로도로 옮기는 것에서 그치지 않고, PADS 넷리스트 검증까지 파이프라인에
-포함시켜 넷이 빠지거나 잘못 연결되지 않았는지 자동으로 대조합니다.
+KiCad 나이틀리(10.99)에는 이제 `.DSN`을 읽는 OrCAD 임포터가 들어 있습니다. 하지만
+그 결과는 "열린다"일 뿐 "바로 쓸 수 있다"가 아닙니다 — 정식 KiCad 10.0에서는 열리지
+않고, 배선은 교차점마다 끊겨 있고, 오프페이지 커넥터는 그림으로 남고, PDF에는 화면에
+안 보이던 라벨 수천 개가 검게 찍히고, PCB와는 아무 연결이 없습니다. orcad2kicad는
+KiCad 임포터의 결과를 받아 이것들을 정리하고, 정리할 때마다 넷리스트를 전후 대조해
+**연결은 그대로임을 확인**한 다음, PADS 보드·풋프린트까지 이어 줍니다.
+
+## KiCad 나이틀리 임포터만 쓰면 안 되나요?
+
+열어서 보기만 할 거라면 나이틀리 임포터로 충분합니다. 그 회로도로 **계속 설계하고
+PCB까지 이어갈** 거라면 아래 차이가 생깁니다. 공개 설계인 Raspberry Pi Compute
+Module IO Board V3(`.DSN`, 3페이지, 기준 넷리스트 IPC-D-356 152넷)로 측정한 값입니다.
+
+| | KiCad 나이틀리 임포터만 | orcad2kicad |
+|---|---|---|
+| 정식 KiCad 10.0에서 열기 | **안 열림** ("Failed to load schematic", 10.99 포맷) | 열림 (루트 시트 + 하위 시트, 10.0 포맷으로 재구성) |
+| ERC 위반 | **1,259건** (끊긴 배선 끝 687, 격자 밖 끝점 432, 지역·전역 라벨 이름 겹침 126 …) | **68건** (전원 플래그 없음 14, 라벨 이름 겹침 54) — 옵션 `--hidden-labels show --duplicate-alias-labels remove` 까지 켜면 **14건**(전원 플래그 없음뿐) |
+| 교차점 배선 | 교차점마다 배선을 끊고 그래픽 선으로 메움 | 하나의 배선으로 병합 (285곳) |
+| 오프페이지 커넥터 | 빨간 그림 + 글자 + 숨은 라벨 | KiCad 전역 라벨 (108개) |
+| 숨은(투명) 라벨 | 1,335개 — 화면엔 안 보이고 **PDF·SVG에는 검게 찍힘** | 중복 1,071개 제거, 남은 4개는 이름·이유를 알리고 처리 방법 선택 |
+| 넷 이름 | 페이지 별칭·이름 없는 넷까지 전역 라벨로 연결 | KiCad 방식(지역 라벨) 또는 PADS·OrCAD 이름 유지 중 선택 |
+| 도면·글자 | OrCAD 타이틀 블록 위에 KiCad 기본 도면 양식이 겹침, 배선 폭 고정, 한글 깨짐 | 빈 도면 양식, KiCad 기본 배선 폭, 깨진 한글 복원 + 한글 글꼴 |
+| 넷리스트 (IPC-D-356 대조) | 152/152 일치 | 152/152 일치 — 정리 전후 연결 동일 |
+
+그 밖에 임포터에는 없는 것:
+
+- **PADS 보드 연동** — PADS Layout ASCII 보드를 임포트해 풋프린트를 `PADS.pretty`로
+  추출하고, 회로도 풋프린트 필드를 채우고, 보드와 회로도를 대조합니다([4]). 보드 넷
+  이름을 회로도 이름에 맞춰 두므로 "Update PCB from Schematic"에서 넷 이름이 바뀌지
+  않습니다.
+- **변환이 맞는지 검증** — PADS `.asc` 또는 IPC-D-356 기준 넷리스트와 넷 단위 대조([3]).
+  정리 단계마다 kicad-cli 넷리스트를 전후 대조해, 달라지면 그 부분을 되돌립니다.
+- **보이지 않는 넷 합쳐짐 경고** — 화면에 안 보이는 숨은 라벨이 다른 이름의 전원 심볼·라벨과 한 배선에
+  있으면 KiCad 는 두 넷을 조용히 하나로 합칩니다(ERC 는 경고 한 줄). orcad2kicad 는 이를 찾아 경고하고,
+  부품 핀에 바로 붙은 숨은 전원 라벨은 보이는 전원 심볼로 바꿉니다. 이미 고쳐 쓰던 KiCad 프로젝트도
+  `--kicad-project` 로 다시 돌려 점검할 수 있습니다.
+- **임포터가 버스로 합친 넷 나누기** — 배선이 버스 엔트리 없이 버스에 닿은 곳에 임포터가 접속점을
+  찍으면, KiCad 는 이를 실제 연결로 보아 그 버스의 데이터선을 전부 한 넷으로 합칩니다. orcad2kicad 는
+  그 접속점을 지우고(넷리스트가 나뉘기만 할 때만), 닿은 자리를 KiCad 버스 엔트리로 다시 그리며, 나뉜
+  넷을 이름까지 알립니다.
+- **자동 변경은 전부 고지** — 도구가 고친 내용과 확인할 점을 로그·출력 폴더의 `auto_changes.txt`·결과
+  요약에 적고, 연결이 바뀌는 변경은 맨 앞에 둡니다.
+- **설치 없는 나이틀리** — `.DSN`을 읽을 때만 쓰는 나이틀리를 공식 배포본에서 받아
+  압축만 풀어 씁니다. 결과는 정식 10.0 포맷이라 이후 작업은 정식 KiCad로 합니다.
+- **알아보기 쉬운 결과** — 검증·ERC를 종류별로 묶고, 남은 항목이 원본 설계 때문인지
+  변환 때문인지 설명합니다. GUI(한국어/영어)·CLI·MCP 서버 제공.
+
+*측정: orcad2kicad(2026-10-29 개발판, 다음 릴리스에 포함) + KiCad 10.99 나이틀리 임포터. ERC는 각 결과를 열 수 있는
+kicad-cli로 실행(임포터 결과는 나이틀리, orcad2kicad 결과는 정식 10.0.7).*
 
 ## 스크린샷
 
@@ -89,7 +134,7 @@ KiCad 회로도로 옮기는 것에서 그치지 않고, PADS 넷리스트 검�
   받을 수 있습니다. 다운로드 후 무결성을 확인하십시오.
 
   ```powershell
-  Get-FileHash orcad2kicad-1.0.4-win64.zip -Algorithm SHA256
+  Get-FileHash orcad2kicad-1.0.5-win64.zip -Algorithm SHA256
   ```
 
   출력된 해시 값을 `SHA256SUMS.txt`에 적힌 값과 비교해서 일치하는지
@@ -196,7 +241,7 @@ orcad2kicad는 보드에서 쓰인 풋프린트를 추출해 프로젝트 전용
 
 ## 테스트
 
-전체 회귀 테스트(약 420개)는 공개할 수 없는 참조 설계 데이터로 돌기 때문에
+전체 회귀 테스트(약 590개)는 공개할 수 없는 참조 설계 데이터로 돌기 때문에
 샘플 의존 테스트는 이 공개 트리에 들어 있지 않습니다. 포함된 샘플 비의존
 테스트 — 합성 케이스, 결과 요약(explain), GUI 언어 표, 브랜딩, 릴리스 검사 —
 는 이 트리에서 그대로 통과하며, Windows/Ubuntu CI(`.github/workflows/tests.yml`)

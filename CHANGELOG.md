@@ -2,6 +2,89 @@
 
 이 파일은 orcad2kicad의 릴리스별 변경 사항을 기록합니다.
 
+## 1.0.5 (2026-10-29)
+
+`.DSN` 임포트 결과의 연결 오류(버스로 합쳐진 넷)를 고치고, 남는 숨은(투명) 라벨을 설명·선택할 수 있게 했으며, 도구가
+자동으로 바꾼 모든 것을 알리게 했습니다.
+
+- **보드 없이 `--netlist`만 주면 풋프린트 필드를 비워 둔다**(`.DSN`/KiCad 프로젝트 입력): 예전에는 넷리스트의
+  풋프린트 이름을 라이브러리 없이(`0603`) 채워 KiCad ERC `footprint_link_issues` 가 부품 수만큼 생겼다. 이제 비워 두고
+  요약 이슈 한 줄(`footprints left empty (no board): N refs ...`)과 결과 요약으로 알린다
+  (`result.footprint_names_unset`). 보드(`--board`)를 주면 예전처럼 `PADS:<데칼>` 로 채운다.
+- **버스 위 접속점으로 합쳐진 넷 나누기(연결이 바뀜)**: 배선이 버스 엔트리 없이 버스에 바로 닿는 점에 나이틀리
+  임포터가 찍은 접속점(junction) 때문에 KiCad 가 그 버스에 닿은 배선들을 한 넷으로 합치던 것을, 접속점을 지워
+  원래대로 나눈다(`kicad_cleanup.remove_bus_wire_junctions` / `split_bus_wire_junctions_guarded`). 버스 분기
+  접속점은 남긴다. 넷리스트가 **나뉘기만** 했을 때만 남기고 아니면 원복한다. 연결이 바뀌므로 `AUTO CHANGES` 맨 앞,
+  나뉜 넷마다 `WARNING net '...' split into ...`(이슈 포함), `auto_changes.txt` 의 `[나뉜 넷]`, 결과 요약에 알린다.
+  `result.import_cleanup['bus_split']`. 끄려면 `--keep-bus-junctions`.
+  이어서 버스에 엔트리 없이 닿은 배선 끝을 KiCad 식(배선 2.54 mm 줄임 + 45도 `bus_entry`)으로 다시 그린다
+  (`draw_bus_entries`, 넷리스트 이름+핀 동일일 때만 — 접속점을 지운 뒤 생기던 ERC `unconnected_wire_endpoint` 가 사라짐). 실측: 비공개 실무 설계 113개 중 2개에서
+  발생, 둘 다 지운 뒤 PADS 정답 넷리스트와 연결 100% 일치(전에는 7~17개 넷이 하나로 합쳐짐), 나머지 111개는 변화 없음.
+- **숨은 라벨 중복 제거 확대**: 배선 없이 같은 이름 전원 심볼 핀에 바로 얹힌 투명 전역 라벨과, 같은 배선에 같은
+  이름 지역 라벨이 있는 투명 **지역** 라벨도 중복으로 지운다(넷리스트 이름·핀 대조). 남는 것은 실제 연결을 실어
+  나르는 것뿐이다.
+- **`--hidden-labels {keep,show,shrink}`**(기본 `keep`, 예전 `keep`/`shrink` 호환): `show` 는 남은 라벨을 보이는
+  전역 라벨로 바꾸고(같은 배선의 OrCAD 별칭 라벨이 전역 라벨이 되고 배선 중간의 것은 빈 배선 끝으로 이동 —
+  ERC `same_local_global_label`·`unconnected_wire_endpoint` 가 그만큼 준다), `shrink` 는 글자를 0.01 mm 로
+  줄여 PDF/SVG 에서도 감춘다. 둘 다 넷리스트의 넷 이름과 핀을 대조해 달라지면 원복한다.
+- **남은 라벨 보고**: 로그에 `hidden labels: N left - ...` 로 이름·페이지·종류(`alias`/`renamed`/`wire`/`free`/`local`)와
+  이유, 처리 결과를 보여 주고 `result.hidden_labels`(JSON/MCP 포함)에 담는다.
+- **GUI**: 체크박스를 3택("그대로 두기"/"보이게 바꾸기"/"PDF에서도 감추기")으로 바꾸고, 파란 설명 줄에 고른
+  방식의 모양을 덧붙이며(`.DSN`/KiCad 프로젝트 입력일 때만), 결과 요약에 남은 개수·이름 5개·이유·처리 결과와
+  keep 일 때 대안 안내를 표시. 저장된 옛 설정값은 그대로 읽는다.
+- **MCP** `convert` 의 `hidden_labels` 가 `keep`/`show`/`shrink` 를 받는다.
+- **버스 버그 수정**: 라벨 끝점 이동이 버스 끝점을 빈 배선 끝으로 오인해 넷 라벨을 버스 위로 옮기는 바람에
+  버스 멤버 넷이 합쳐지던 문제를 고쳤다(비공개 실무 설계 113개 실측 중 2개에서 발생, 수정 뒤 0개).
+- **넷리스트 검증 정리(`cleanup_project_guarded`)**: `.DSN`/KiCad 프로젝트의 정리 단계마다 kicad-cli 넷리스트
+  (넷 이름+핀)를 대조하고, 달라지면 라벨 끝점 이동을 뺀 정리 -> 안전한 단계만 -> 전부 되돌림 순으로 물러난다.
+  `result.import_cleanup['guard']`(`level`/`verified`/`tried`)와 로그 `import cleanup:` 줄의 접두어, 결과 요약의
+  쉬운 말 설명으로 알린다.
+- **H1 숨은 전원 라벨 -> 전원 심볼**: 부품 핀에 바로 얹힌 숨은 전원 이름 라벨(예: GND)을 같은 이름 전원 심볼로
+  바꾼다(넷리스트 검증). `result.hidden_labels['power_symbols_placed']`, 로그 `hidden labels: N hidden power
+  labels sitting on part pins replaced by power symbols`.
+- **H2 숨은 라벨 이름 충돌 경고**: 같은 배선에 숨은 라벨과 다른 이름의 전원 심볼/보이는 전역 라벨이 있어 KiCad 가
+  두 넷을 조용히 합치는 상황(ERC 는 `multiple_net_names` 경고뿐)을 로그 `WARNING hidden label name conflicts`,
+  `result.hidden_labels['conflicts']`, 결과 요약의 경고 구역(결론 "확인할 항목 있음")과 GUI 이슈 탭으로 알린다.
+  직접 고친 프로젝트를 `--kicad-project` 로 다시 돌려 검사하는 데도 쓸 수 있다.
+- **라벨 정리(label tidy)**: EDIF 출력에서 별칭 라벨을 배선의 빈 끝으로 옮기고(로그 `label tidy:`), 두 경로 모두
+  배선이 계속 이어지는 핀 쪽 끝의 라벨도 정리하며, 배선 끝에서 0.254 mm 모자란 오프페이지 전역 라벨을 끝으로
+  붙인다(`import_cleanup['globals_snapped']`).
+- **`--duplicate-alias-labels {keep,remove}`**(기본 `keep`): 같은 배선의 보이는 전역 라벨과 이름이 같은 지역 별칭
+  라벨을 지운다(ERC `same_local_global_label` 이 사라지는 대신 그림에서 글자가 하나씩 줄어듦, 넷리스트 검증).
+  `result.duplicate_alias_removed`. GUI 체크박스 "중복 별칭 라벨 지우기", MCP `convert` 의 `duplicate_alias_labels`.
+- **숨은 지역 라벨 제거**: 넷 이름 `kicad` 모드에서 숨은 *지역* 라벨도 지운다(핀 분할 검증). 남은 목록의 종류
+  `local` 은 "그 배선에 시트 안 이름을 주는 유일한 숨은 지역 라벨"이다.
+- 로그 문구 변경: `hidden global labels removed` -> `importer hidden labels removed`(`net names: kicad - N ...`).
+- **문서**: 사용자 설명서(한/영)에 문제 해결 항목 "전원 심볼의 넷 이름이 엉뚱하게 보이면 / 두 전원 넷이 합쳐짐"과
+  위 기능 설명을 추가.
+- **숨은 라벨이 PDF 에서 배선을 덮지 않게**(기본 `keep` 유지): KiCad 화면에는 안 보이고 PDF/SVG 에는 검게 찍히는
+  숨은 라벨을 배선 반대 방향으로 돌리거나, 같은 배선의 비어 있는 끝으로 옮긴다(넷리스트 대조).
+  `import_cleanup['hidden_oriented']`.
+- **넷 이름 정리 뒤 2차 중복 제거**: 1차에서 이름 때문에 보호됐던 중복 숨은 라벨을 넷 이름 정리 뒤 한 번 더 지운다
+  (넷리스트 대조). 로그 `hidden labels: N more redundant hidden labels removed after net-name cleanup ...`.
+- **`--hidden-labels show` 모양 개선**: OrCAD 에서 글자가 안 보이던 라벨은 작고 옅은 회색(`--hidden-label-style
+  subtle`, 기본; `normal` 은 일반 모양, CLI 전용) 전역 라벨로, 보이던 OrCAD 별칭 글자는 일반 라벨로 드러낸다. 드러낸
+  라벨은 배선 반대쪽을 향하고 글자 크기를 1.27 mm 이하로 제한해 2.54 mm 간격 이웃과 겹치지 않는다.
+- **배선 없이 부품 핀에 바로 얹힌 라벨**: 정렬(justify)이 없어 글자가 핀 끝에 가운데로 걸리던 것을 회전·정렬을
+  부품 몸체 반대쪽으로 맞춘다(연결점은 그대로). `import_cleanup['pin_labels_faced']`.
+- **핀 번호 글자 맞춤**: 핀보다 긴 핀 번호(임포터가 1.7 mm 글자를 그대로 복사)가 핀 이름·라벨 위로 넘치던 것을 핀
+  길이의 70%(최소 0.6 mm)로 줄인다. 시트의 내장 `lib_symbols` 와 `.kicad_sym` 라이브러리 둘 다 바꿔 ERC
+  `lib_symbol_mismatch` 가 생기지 않는다(KiCad 는 핀마다 번호 위치를 옮길 수 없어 크기만 조절 가능).
+  `import_cleanup['pin_numbers_fitted']`.
+- **오프페이지 커넥터 인식 확대**: 한 줄 갈매기(줄기 2.54 mm + 대각선 2조각) 모양, 임포터 각도가 틀렸거나 세로
+  커넥터에서 0 인 라벨(자기 각도 우선, 이어서 다른 방향 시도), 가운데 정렬된 가로 글자의 세로 커넥터를 인식해 전역
+  라벨로 바꾼다. 커넥터 글자가 숨은 라벨(=실제 넷) 이름과 **다르면**(OrCAD 가 한 넷에 커넥터 이름을 둘 준 경우) 바꾸면
+  넷이 갈라지므로 **바꾸지 않고** 그림으로 두며 `WARNING off-page connector '...' (...) left as a drawing: its net is
+  '...'` 로 로그·이슈 목록·결과 요약·`auto_changes.txt` 에 알린다(`import_cleanup['offpage_unconverted']`).
+- **자동 변경 고지**: 도구가 회로도를 자동으로 바꾼 모든 것을 확실히 알린다 — 로그 `AUTO CHANGES:` 블록(항목별
+  `  - N ...` 줄), 출력 폴더의 `auto_changes.txt`(UTF-8 BOM, 항목·개수·확인할 점·이름이 바뀐 넷 `이전 -> 이후` 목록·
+  그림으로 남은 커넥터), 결과 요약 입력 줄 바로 아래 "자동 변경" 구역과 결론 줄 꼬리 문장, JSON/MCP `auto_changes`.
+  공개 설계 Raspberry Pi CMIO V3(기본 옵션, 개발 빌드)의 9개 항목: 오프페이지 커넥터 108개 -> 전역 라벨,
+  교차점 끊김 285개 병합, 라벨 117개 빈 배선 끝으로 이동, 숨은 라벨 235개 배선 반대로 돌림, 중복 숨은 라벨 1,071개
+  제거, 배선 941개 기본 폭, 빈 도면 양식, 임포터 숨은 전역 라벨 152개 제거(넷 이름 `kicad`), 넷 84개 이름 변경.
+  ERC 68(`power_pin_not_driven` 14, `same_local_global_label` 54), 남은 숨은 라벨 4개(`CD0_SCL`·`CD0_SDA`·
+  `CD1_SCL`·`CD1_SDA`, 종류 `alias`).
+
 ## 1.0.4 (2026-10-28)
 
 `.DSN` 임포트 결과 정리 강화(오프페이지 커넥터·배선 굵기·PDF 의 검은 숨은 라벨), 한글 표시, 넷 이름 방침 변경과 GUI 옵션입니다.

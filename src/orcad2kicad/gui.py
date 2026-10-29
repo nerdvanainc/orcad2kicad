@@ -319,13 +319,22 @@ def net_names_note(selected, effective):
 DEFAULT_KOREAN_FONT = 'Malgun Gothic'
 
 
-def net_options_explanation(net_names, board_net_names, has_board):
-    """넷 이름 옵션 조합의 결과 설명(현재 언어). 보드가 없으면 보드 넷 이름 옵션은 무관하다."""
+def net_options_explanation(net_names, board_net_names, has_board, hidden_labels=None, input_mode='edif',
+                            duplicate_alias_labels=False):
+    """넷 이름 옵션 조합의 결과 설명(현재 언어). 보드가 없으면 보드 넷 이름 옵션은 무관하다.
+
+    `.DSN`/KiCad 프로젝트 입력이면 남은 숨은 라벨 처리(`hidden_labels`)가 낳는 모습도 덧붙인다(EDIF 는 무관)."""
     nn = net_names if net_names in ('kicad', 'keep') else 'kicad'
     if not has_board:
-        return t(f'netexp_{nn}_noboard')
-    bn = board_net_names if board_net_names in ('schematic', 'pads') else 'schematic'
-    return t(f'netexp_{nn}_{bn}')
+        text = t(f'netexp_{nn}_noboard')
+    else:
+        bn = board_net_names if board_net_names in ('schematic', 'pads') else 'schematic'
+        text = t(f'netexp_{nn}_{bn}')
+    if input_mode in ('dsn', 'kicad_project') and hidden_labels in ('keep', 'show', 'shrink'):
+        text += '\n' + t(f'hexp_{hidden_labels}')
+    if duplicate_alias_labels:
+        text += '\n' + t('hexp_dup_alias')
+    return text
 
 
 def verification_summary(cmp):
@@ -623,10 +632,12 @@ class App(tk.Tk if tk is not None else object):
         self.var_kicad_cli = tk.StringVar()
         self.var_net_names = tk.StringVar(value='kicad')     # kicad | keep
         self.var_board_net_names = tk.StringVar(value='schematic')   # schematic | pads
-        self.var_hidden_shrink = tk.BooleanVar(value=False)  # hidden_labels: False=keep, True=shrink
+        self.var_hidden_labels = tk.StringVar(value='keep')  # keep | show | shrink
         self.var_korean_font = tk.StringVar(value=DEFAULT_KOREAN_FONT)
+        self.var_dup_alias = tk.BooleanVar(value=False)       # 중복 별칭 라벨 지우기(EDIF·.DSN 공통)
         self.var_net_explain = tk.StringVar(value='')
-        for v in (self.var_net_names, self.var_board_net_names, self.var_board):
+        for v in (self.var_net_names, self.var_board_net_names, self.var_board, self.var_hidden_labels,
+                  self.var_input_mode, self.var_dup_alias):
             v.trace_add('write', lambda *_a: self.refresh_net_explain())
         self.var_pdf = tk.BooleanVar(value=False)
         self.var_strict = tk.BooleanVar(value=False)
@@ -732,19 +743,27 @@ class App(tk.Tk if tk is not None else object):
                             ('pads', t('board_net_names_pads'))):
             ttk.Radiobutton(row_bn, text=text, value=value,
                             variable=self.var_board_net_names).pack(side='left', padx=(0, 12))
+        ttk.Label(opt, text=t('label_hidden_labels')).grid(row=2, column=0, sticky='e', padx=(0, 4))
+        row_hl = ttk.Frame(opt)
+        row_hl.grid(row=2, column=1, sticky='w')
+        self.rad_hidden = []        # .DSN/KiCad 프로젝트 입력에서만 활성화(_sync_input_mode)
+        for value in ('keep', 'show', 'shrink'):
+            rb = ttk.Radiobutton(row_hl, text=t(f'hidden_labels_{value}'), value=value,
+                                 variable=self.var_hidden_labels)
+            rb.pack(side='left', padx=(0, 12))
+            self.rad_hidden.append(rb)
         row_x = ttk.Frame(opt)
-        row_x.grid(row=2, column=0, columnspan=2, sticky='w', pady=(2, 0))
-        self.chk_hidden = ttk.Checkbutton(row_x, text=t('chk_hidden_labels'),
-                                          variable=self.var_hidden_shrink)
-        self.chk_hidden.pack(side='left', padx=(0, 12))
+        row_x.grid(row=3, column=0, columnspan=2, sticky='w', pady=(2, 0))
         ttk.Label(row_x, text=t('label_korean_font')).pack(side='left')
         ttk.Entry(row_x, textvariable=self.var_korean_font, width=18).pack(side='left', padx=(4, 12))
         ttk.Checkbutton(row_x, text=t('chk_pdf'), variable=self.var_pdf).pack(side='left', padx=8)
+        ttk.Checkbutton(row_x, text=t('chk_dup_alias'),
+                        variable=self.var_dup_alias).pack(side='left', padx=8)
         ttk.Checkbutton(row_x, text=t('chk_strict'),
                         variable=self.var_strict).pack(side='left', padx=8)
         self.lbl_net_explain = ttk.Label(opt, textvariable=self.var_net_explain, wraplength=900,
                                          justify='left', foreground='#1f4e79')
-        self.lbl_net_explain.grid(row=3, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        self.lbl_net_explain.grid(row=4, column=0, columnspan=2, sticky='w', pady=(4, 0))
         self.refresh_net_explain()
 
         self.var_input_mode.trace_add('write', self._sync_input_mode)
@@ -791,9 +810,9 @@ class App(tk.Tk if tk is not None else object):
             ent.configure(state=state)
             if btn is not None:
                 btn.configure(state=state)
-        chk = getattr(self, 'chk_hidden', None)       # 숨은 라벨 축소는 .DSN/KiCad 프로젝트 입력에서만 의미 있음
-        if chk is not None:
-            chk.configure(state='normal' if mode in ('dsn', 'kicad_project') else 'disabled')
+        # 남은 숨은 라벨 처리는 .DSN/KiCad 프로젝트 입력에서만 의미 있음
+        for rb in getattr(self, 'rad_hidden', ()):
+            rb.configure(state='normal' if mode in ('dsn', 'kicad_project') else 'disabled')
 
     def refresh_net_explain(self):
         """넷 이름 옵션 조합이 낳는 결과를 한두 줄로 보여준다(선택이 바뀔 때마다 갱신)."""
@@ -801,7 +820,9 @@ class App(tk.Tk if tk is not None else object):
             return
         self.var_net_explain.set(net_options_explanation(
             self.var_net_names.get(), self.var_board_net_names.get(),
-            bool(self.var_board.get().strip())))
+            bool(self.var_board.get().strip()),
+            self.var_hidden_labels.get(), self.var_input_mode.get(),
+            bool(self.var_dup_alias.get())))
 
     # ----- AI 프레임 -----
     def _build_ai_frame(self):
@@ -1084,7 +1105,8 @@ class App(tk.Tk if tk is not None else object):
                                project=s(self.var_project), kicad_cli=s(self.var_kicad_cli),
                                net_names=(mode if mode == 'keep' else None),   # None = 기본(kicad)
                                board_net_names=(board_mode if board_mode == 'pads' else None),
-                               hidden_labels=('shrink' if self.var_hidden_shrink.get() else 'keep'),
+                               hidden_labels=self.var_hidden_labels.get(),
+                               duplicate_alias_labels='remove' if self.var_dup_alias.get() else 'keep',
                                korean_font=self.var_korean_font.get().strip(),
                                pdf=bool(self.var_pdf.get()),
                                strict_board=bool(self.var_strict.get()),
@@ -1111,7 +1133,9 @@ class App(tk.Tk if tk is not None else object):
         self.var_kicad_cli.set(opts.kicad_cli or '')
         self.var_net_names.set(opts.net_names if opts.net_names == 'keep' else 'kicad')
         self.var_board_net_names.set('pads' if opts.board_net_names == 'pads' else 'schematic')
-        self.var_hidden_shrink.set(opts.hidden_labels == 'shrink')
+        self.var_hidden_labels.set(opts.hidden_labels if opts.hidden_labels in ('keep', 'show', 'shrink')
+                                   else 'keep')
+        self.var_dup_alias.set(opts.duplicate_alias_labels == 'remove')
         self.var_korean_font.set(opts.korean_font or '')
         self.var_pdf.set(bool(opts.pdf))
         self.var_strict.set(bool(opts.strict_board))
@@ -1127,7 +1151,8 @@ class App(tk.Tk if tk is not None else object):
                 'project': self.var_project.get(), 'kicad_cli': self.var_kicad_cli.get(),
                 'net_names': self.var_net_names.get(),
                 'board_net_names': self.var_board_net_names.get(),
-                'hidden_labels': 'shrink' if self.var_hidden_shrink.get() else 'keep',
+                'hidden_labels': self.var_hidden_labels.get(),
+                'duplicate_alias_labels': 'remove' if self.var_dup_alias.get() else 'keep',
                 'korean_font': self.var_korean_font.get(),
                 'pdf': bool(self.var_pdf.get()),
                 'strict_board': bool(self.var_strict.get()),
@@ -1150,8 +1175,10 @@ class App(tk.Tk if tk is not None else object):
             self.var_net_names.set('keep' if data['net_names'] == 'keep' else 'kicad')
         if data.get('board_net_names') in ('schematic', 'pads'):
             self.var_board_net_names.set(data['board_net_names'])
-        if data.get('hidden_labels') in ('keep', 'shrink'):
-            self.var_hidden_shrink.set(data['hidden_labels'] == 'shrink')
+        if data.get('hidden_labels') in ('keep', 'show', 'shrink'):     # 옛 설정은 keep/shrink 만 저장했음
+            self.var_hidden_labels.set(data['hidden_labels'])
+        if data.get('duplicate_alias_labels') in ('keep', 'remove'):
+            self.var_dup_alias.set(data['duplicate_alias_labels'] == 'remove')
         for key, var in (('pdf', self.var_pdf), ('strict_board', self.var_strict)):
             if key in data:
                 var.set(bool(data[key]))
@@ -1355,7 +1382,7 @@ class App(tk.Tk if tk is not None else object):
         """파이프라인 결과를 각 탭에 채운다(Tk 스레드에서만 호출)."""
         self.result = result
         self.set_verifications(result)
-        self.issues = list(result.issues or ())
+        self.issues = list(result.issues or ())   # 숨은 라벨 이름 충돌은 파이프라인이 이슈에 올린다
         self.refresh_issues()
         self.set_diff_rows(diff_rows(result.board_diff, self.resolutions))
         self.set_files(result.files, getattr(result, 'input_mode', 'edif'))

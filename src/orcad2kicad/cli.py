@@ -142,14 +142,30 @@ def main(argv=None):
     ap.add_argument('--keep-wire-width', dest='default_wire_width', action='store_false',
                      help='kicad-project/dsn mode: keep the importer wire width (0.254 mm) instead '
                           'of switching wires to the KiCad default width (default: switch)')
+    ap.add_argument('--keep-bus-junctions', dest='split_bus_junctions', action='store_false',
+                     help='kicad-project/dsn mode: keep the junctions the importer put where wires touch '
+                          'a bus without a bus entry (default: remove them, which splits the nets KiCad '
+                          'had joined through the bus - verified with the netlist, reported as an auto change), '
+                          'and keep wire ends touching a bus as drawn (default: redraw them with a shortened '
+                          'wire and a 45-degree bus entry, netlist verified identical)')
     ap.add_argument('--board-net-names', choices=('schematic', 'pads'), default=None,
                      help='with --board: rename the output board nets to the schematic net names so '
                           '"Update PCB from Schematic" keeps every net name (schematic, default) or keep '
                           'the PADS names (pads)')
-    ap.add_argument('--hidden-labels', choices=('keep', 'shrink'), default='keep',
-                     help='dsn/kicad-project mode: hidden (transparent) importer labels that remain are '
-                          'drawn black in PDF/SVG plots; shrink their text to 0.01 mm (shrink) or leave '
-                          'them (keep, default)')
+    ap.add_argument('--hidden-label-style', choices=('subtle', 'normal'), default='subtle',
+                     help='with --hidden-labels show: draw the labels that had no visible text in OrCAD '
+                          'as small light-grey global labels (subtle, default) or normal ones (normal)')
+    ap.add_argument('--hidden-labels', choices=('keep', 'show', 'shrink'), default='keep',
+                     help='dsn/kicad-project mode: importer hidden (transparent) global labels that remain '
+                          'after cleanup carry real connections; they are invisible in KiCad but drawn '
+                          'black in PDF/SVG. keep (default): leave them; show: turn them into visible '
+                          'global labels; shrink: shrink their text to 0.01 mm so PDF/SVG hide them too. '
+                          'The log lists every remaining label and why it stays')
+    ap.add_argument('--duplicate-alias-labels', choices=('keep', 'remove'), default='keep',
+                     help='a local alias label sitting on the same wire as a visible global label of the '
+                          'same name (OrCAD: alias drawn next to an off-page connector) is redundant in KiCad '
+                          'and raises ERC same_local_global_label. remove: delete it (one text less on the '
+                          'drawing; netlist verified); keep (default): leave it')
     ap.add_argument('--korean-font', default='Malgun Gothic', metavar='NAME',
                      help='font face set on texts/labels/fields containing Korean (KiCad default and '
                           'Latin fonts cannot draw Hangul); "" to leave fonts unchanged '
@@ -192,8 +208,11 @@ def main(argv=None):
         project=args.project, kicad_cli=args.kicad_cli, net_names=args.net_names,
         pdf=args.pdf, strict_board=args.strict_board, stable_format=args.stable_format,
         import_cleanup=args.import_cleanup, default_wire_width=args.default_wire_width,
+        split_bus_junctions=args.split_bus_junctions,
         korean_font=args.korean_font, board_net_names=args.board_net_names,
         hidden_labels=args.hidden_labels,
+        hidden_label_style=args.hidden_label_style,
+        duplicate_alias_labels=args.duplicate_alias_labels,
         resolutions=rez))
     if result.error:                       # 입력/출력 오류: stdout 에는 아무것도 쓰지 않는다
         print(f'error: {result.error}', file=sys.stderr)
