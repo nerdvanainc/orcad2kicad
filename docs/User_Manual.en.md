@@ -535,7 +535,58 @@ actual routed PADS board.
      "unconnected," making DRC results untrustworthy (see Chapter 12 "Known Limitations").
 4. Point `--board`/the GUI's "PADS layout ASCII or KiCad PCB" at the resulting `.asc` file. If you
    already have a `.kicad_pcb` imported into KiCad, you can point at that file directly instead
-   (it's read as-is, without re-importing).
+   (it's read as-is, without re-importing). In that case the solder mask cleanup of section 4.5 cannot
+   run (there is no PADS CAM information) and only a warning is shown.
+
+### 4.5 PADS board solder mask cleanup (on by default, `--keep-board-masks` turns it off)
+
+The KiCad PADS board importer has three solder mask defects. They have nothing to do with the schematic, and
+**a board manufactured as imported gets a wrong solder mask.** When an `.asc` board is given, the tool fixes
+them right after the import (before the board is read), so the output `.kicad_pcb` and `PADS.pretty` both get
+the fix. Pad sizes, holes, tracks and nets are not changed.
+
+1. **Missing pad mask openings.** In PADS a pad gets a mask opening in the manufacturing Gerber whenever the
+   CAM solder mask document plots pads, even if the pad stack lists no mask layer. The KiCad importer ignores
+   that CAM setting and only carries over mask layers written in the pad stack, so through-hole pads end up
+   with no opening at all or with the back one missing. Example board: of 159 through-hole pads, 101 had no
+   opening and 58 had no back opening. → The CAM solder mask documents in the `.asc` are read, and where a side
+   plots pads, every plated pad with copper on that side gets `F.Mask`/`B.Mask`. Vias are untented only on a
+   side whose CAM document plots vias **on the copper layer** (the column of the mask layer itself is ignored).
+   Non-plated holes are left alone. A PADS file without solder mask CAM documents is not changed; a warning is
+   shown instead.
+2. **Constant board mask clearance.** The importer does not read any PADS value for `pad_to_mask_clearance`; it
+   writes the number 3 in the file's own unit — **3 mm** for a metric (METRIC) PADS file (openings 6 mm larger
+   than the pads), 0.000002 mm for BASIC units. → Only when the value is that constant, it is replaced by **0**
+   (the KiCad default for new boards — mask expansion is usually added by the fab for its own process). Any other
+   value set in KiCad is kept.
+   The PADS CAM pad oversize is **not applied, only reported** (log and `auto_changes.txt`). The PADS oversize is
+   added to the full pad width, so to get the same opening size as the PADS Gerbers, enter half of it as the
+   clearance in Board Setup > Solder Mask/Paste (e.g. oversize 0.254 mm → 0.127 mm). Doing so removes the mask
+   web between pins wherever the pad gap is smaller than the oversize, such as 0.5–0.65 mm pitch ICs — 151 pad
+   pairs on a 0.5 mm QFP and a 0.65 mm SOP of the example board. Real manufacturing Gerbers were seen where the
+   designer lowered the oversize at output time to keep those webs, so it is not applied by default.
+3. **Unrelated drawings land on the mask layers.** The importer follows a PADS layer's type (`LAYER_TYPE`) when it
+   has one, but for an **UNASSIGNED** layer it uses a per-number default, and that default sends layer 25 to
+   `F.Mask` and layer 28 to `B.Mask`. In the PADS default setup layer 25 is "Layer_25 / UNASSIGNED", so outlines
+   drawn on it in a decal never reach the PADS mask Gerber, yet in KiCad they become mask openings. Example board:
+   10 outlines 0.001 mm wide in a 144-pin QFP and an SOP decal → 199 KiCad DRC mask violations
+   (`solder_mask_bridge`). → Only when that layer is UNASSIGNED in the PADS file and no CAM solder mask document
+   plots it, footprint drawings whose points and width all match the decal's pieces on that layer are **moved to
+   `Cmts.User`, not deleted** (where the importer puts the other unassigned layers 19 and 20). Mask drawings not
+   in the decal are kept. After the cleanup the example board has 0 DRC mask violations.
+
+Notice: the `board mask: ...` log line, the `PCB:` entries of `AUTO CHANGES` (also in `auto_changes.txt` in the
+output folder) and `board_mask` in the result JSON/MCP.
+
+Verified (2026-10-29, private real-world boards and their PADS manufacturing Gerbers): on a board whose
+positions line up, the openings matched the PADS Gerber at all 90/90 places on both sides (before the cleanup
+KiCad had 20/56), and on a BASIC-unit board every KiCad opening is in the PADS Gerber (with the clearance set to
+half the oversize, the sizes match too). Remaining differences: (a) with clearance 0 a KiCad opening equals the
+pad, so on boards with a CAM oversize it is smaller than the PADS Gerber by the oversize (see item 2); (b) with a
+clearance, KiCad rounds the corners of rectangular pad openings by the clearance (PADS keeps sharp rectangles);
+(c) PADS boards whose pad stacks list explicit mask sizes can be 0 to 0.1 mm (full width) larger per pad (per-pad
+values are not carried over). Before manufacturing, overlay
+KiCad's F.Mask/B.Mask Gerbers on the PADS mask Gerbers.
 
 ## 5. Using the GUI
 
@@ -913,6 +964,7 @@ re-check as the version advances):
 | `--board BOARD` | PADS board (`.asc` is imported via kicad-cli; `.kicad_pcb` is read as-is) | none |
 | `--net-names {kicad,keep}` | `kicad`: KiCad-style names without artificial global labels (aliases local, unnamed nets `Net-(...)`; for `.DSN`/KiCad project the importer's hidden global labels are removed after a netlist check). `keep`: keep PADS/OrCAD names via global labels (old behaviour) | `kicad` |
 | `--board-net-names {schematic,pads}` | With `--board`: `schematic` renames output board nets to the schematic names (no renames in Update PCB); `pads` keeps PADS names | `schematic` |
+| `--keep-board-masks` | With `--board .asc`: keep the solder mask as the KiCad PADS importer wrote it (default: the section 4.5 cleanup — restore missing pad mask openings, correct the importer's constant clearance) | cleanup on |
 | `--duplicate-alias-labels {keep,remove}` | `remove` deletes a local alias label that sits on the same wire as a visible global label of the same name (OrCAD habit: alias next to an off-page connector). Removes ERC `same_local_global_label` warnings, but the drawing loses one text each. Netlist-verified, reverted if it differs. EDIF and `.DSN` | `keep` |
 | `--hidden-labels {keep,show,shrink}` | `.DSN`/KiCad project only. What to do with transparent labels left after cleanup (they carry real connections). `keep`: as imported (plotted black in PDF/SVG). `show`: turn them into visible global labels (the drawing gains labels). `shrink`: text 0.01 mm so PDF/SVG hide them too (the connection then has no visible label). `show`/`shrink` are netlist-verified and reverted if the netlist changes | `keep` |
 | `--hidden-label-style {subtle,normal}` | Look of labels revealed by `--hidden-labels show` (CLI only; GUI/MCP use `subtle`). `subtle`: labels with no visible text in OrCAD become small light-grey labels (0.9 mm text), visible alias text stays a normal label. `normal`: all normal labels | `subtle` |

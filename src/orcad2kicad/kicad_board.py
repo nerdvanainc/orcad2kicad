@@ -28,6 +28,344 @@ def import_pads_board(kicad_cli, asc_path, out_pcb, report_json=None):
         return json.load(f)
 
 
+_CAM_DOC_RE = re.compile(r'CAM_DOC_NAME[^\n]*\n\s*\{(.*?)\n\s*\}', re.S)
+_PADS_LAYER_RE = re.compile(r'^LAYER\s+(\d+)\s*\n\s*\{(.*?)\n\s*\}', re.S | re.M)
+
+
+def _pads_unit_mm(asc_text):
+    """PADS ASCII 헤더의 단위 -> mm 배율(BASIC: 1 mil = 38100, MILS, METRIC). 모르면 None."""
+    head_line = asc_text[:80].upper()
+    if 'BASIC' in head_line:
+        return 0.0254 / 38100
+    if 'MILS' in head_line:
+        return 0.0254
+    if 'METRIC' in head_line or 'MM' in head_line:
+        return 1.0
+    return None
+
+
+def pads_mask_cam(asc_text):
+    """PADS ASCII 보드의 CAM 문서 중 솔더마스크 문서(`DOC_PLOT_TYPE Solder_Mask`)를 읽어 면별 출력 대상을 돌려준다.
+
+    PADS 는 패드스택에 마스크 레이어를 적지 않아도 CAM 의 솔더마스크 문서가 패드(`DOC_PADS`)·비아(`DOC_VIAS`)를
+    그리면 그 자리에 개구가 생긴다(오버사이즈 `DOC_PAD_OVERSIZE`). KiCad 의 PADS 임포터는 패드스택에 적힌 마스크만
+    옮기고 CAM 은 읽지 않아, 스루홀 패드의 마스크 개구가 빠지거나 한쪽만 남는다(2026-10-29 실측: 샘플 보드 스루홀
+    159개 중 101개 개구 없음·58개 뒷면 없음, 코퍼스 PADS 보드 31개 전부 해당 패드스택 있음).
+
+    면 판정: 문서의 `DOC_FABRICATION_LAYER_NUMBER` 레이어 정의 이름에 Top/Bottom 이 있으면 그것으로, 없으면 PADS 기본
+    번호(21 = Solder Mask Top, 28 = Solder Mask Bottom). 반환값: `{'top': {'pads': bool, 'vias': bool,
+    'oversize_mm': float | None}, 'bottom': {...}}` — 솔더마스크 문서가 없는 면은 키가 없다(판단 근거 없음)."""
+    names = {}
+    for m in _PADS_LAYER_RE.finditer(asc_text):
+        nm = re.search(r'LAYER_NAME\s+([^\n]*)', m.group(2))
+        if nm:
+            names[int(m.group(1))] = nm.group(1).strip().lower()
+    unit = _pads_unit_mm(asc_text)
+    out = {}
+    for m in _CAM_DOC_RE.finditer(asc_text):
+        body = m.group(1)
+        if not re.search(r'DOC_PLOT_TYPE\s+Solder_Mask', body):
+            continue
+        fab = re.search(r'DOC_FABRICATION_LAYER_NUMBER\s+(\d+)', body)
+        num = int(fab.group(1)) if fab else None
+        name = names.get(num, '')
+        side = 'top' if 'top' in name else 'bottom' if 'bottom' in name else \
+            {21: 'top', 28: 'bottom'}.get(num)
+        if side is None:
+            continue
+
+        # DOC_PADS/DOC_VIAS 는 DOC_LAYER_NUMBERS 와 같은 순서의 레이어별 색 목록이다. 구리 레이어 칸만 본다 —
+        # 마스크 레이어 자체(21/28) 칸은 패드스택에 직접 적힌 마스크 항목(임포터가 이미 옮김)을 그리는 것이라
+        # 판단에 넣으면 안 된다(실측: 밑면 문서 `DOC_VIAS None Black` = 구리 비아는 안 그림, PADS 거버에도 비아 없음).
+        nums = re.search(r'DOC_LAYER_NUMBERS\s+([^\n]*)', body)
+        nums = [int(x) for x in nums.group(1).split() if x.lstrip('-').isdigit()] if nums else []
+        copper_idx = next((k for k, n in enumerate(nums) if n not in (0, num)), None)
+
+        def on(key):
+            v = re.search(key + r'\s+([^\n]*)', body)
+            if not v or copper_idx is None:
+                return False
+            cols = v.group(1).split()
+            return copper_idx < len(cols) and cols[copper_idx] != 'None'
+        over = re.search(r'DOC_PAD_OVERSIZE\s+(-?\d+)', body)
+        cur = out.setdefault(side, {'pads': False, 'vias': False, 'oversize_mm': None})
+        cur['pads'] |= on('DOC_PADS')
+        cur['vias'] |= on('DOC_VIAS')
+        if over and unit is not None and cur['oversize_mm'] is None:
+            cur['oversize_mm'] = round(int(over.group(1)) * unit, 4)
+    return out
+
+
+_PAD_HEAD_RE = re.compile(r'^\s*\(pad\s+"(?:[^"\\]|\\.)*"\s+(thru_hole|smd|np_thru_hole|connect)\b')
+_LAYERS_LINE_RE = re.compile(r'^(\s*\(layers)((?:\s+"[^"]*")*)(\s*\).*)$')
+
+
+def restore_pad_mask_openings(pcb_text, cam):
+    """`pads_mask_cam` 결과대로 `.kicad_pcb` 의 패드·비아 마스크 개구를 복원한다(문자열 수정, 다른 내용 불변).
+
+    - 패드: CAM 이 그 면 솔더마스크에 패드를 그리면, 그 면에 구리가 있는 도금 패드(스루홀 `*.Cu`/`F.Cu`/`B.Cu`,
+      SMD 의 자기 면)의 `(layers …)` 에 빠진 `F.Mask`/`B.Mask` 를 더한다. 이미 `*.Mask`·해당 마스크가 있으면 그대로.
+      무도금 홀(`np_thru_hole`)·`connect` 패드는 건드리지 않고 수만 센다.
+    - 비아: CAM 이 그 면 솔더마스크에 비아를 그리면 그 면 `(tenting (front|back yes))` 를 `no` 로(개구).
+    - 패드 크기·구멍·배선·넷·마스크 여유값(`solder_mask_margin`, `pad_to_mask_clearance`)은 바꾸지 않는다.
+
+    반환값: (새 텍스트, {'pads_front': 더한 F.Mask 수, 'pads_back': 더한 B.Mask 수, 'vias_front': 연 비아 앞면 수,
+    'vias_back': 연 비아 뒷면 수, 'npth': 건드리지 않은 무도금 홀 수}). 멱등."""
+    stats = {'pads_front': 0, 'pads_back': 0, 'vias_front': 0, 'vias_back': 0, 'npth': 0}
+    want_pad = {s: bool(cam.get(s, {}).get('pads')) for s in ('top', 'bottom')}
+    want_via = {s: bool(cam.get(s, {}).get('vias')) for s in ('top', 'bottom')}
+    lines = pcb_text.split('\n')
+    pad_kind = None              # 지금 보고 있는 pad 의 종류(그 pad 의 layers 줄을 만나기 전까지)
+    in_via = in_tenting = False
+    via_indent = ''
+    for i, line in enumerate(lines):
+        m = _PAD_HEAD_RE.match(line)
+        if m:
+            pad_kind = m.group(1)
+            continue
+        if pad_kind is not None:
+            lm = _LAYERS_LINE_RE.match(line)
+            if lm:
+                kind, pad_kind = pad_kind, None
+                toks = re.findall(r'"([^"]*)"', lm.group(2))
+                if kind == 'np_thru_hole':
+                    stats['npth'] += 1
+                    continue
+                if kind == 'connect':
+                    continue
+                front = '*.Cu' in toks or 'F.Cu' in toks
+                back = '*.Cu' in toks or 'B.Cu' in toks
+                add = []
+                if front and want_pad['top'] and not ({'F.Mask', '*.Mask'} & set(toks)):
+                    add.append('F.Mask')
+                    stats['pads_front'] += 1
+                if back and want_pad['bottom'] and not ({'B.Mask', '*.Mask'} & set(toks)):
+                    add.append('B.Mask')
+                    stats['pads_back'] += 1
+                if add:
+                    lines[i] = lm.group(1) + lm.group(2) + ''.join(f' "{a}"' for a in add) + lm.group(3)
+            continue
+        stripped = line.lstrip('\t ')
+        if stripped.startswith('(via') and (stripped == '(via' or stripped.startswith('(via ')):
+            in_via, in_tenting = True, False
+            via_indent = line[:len(line) - len(stripped)]
+            continue
+        if in_via:
+            if line == via_indent + ')':
+                in_via = in_tenting = False
+            elif stripped.startswith('(tenting'):
+                in_tenting = True
+            elif in_tenting:
+                for side, key in (('top', 'front'), ('bottom', 'back')):
+                    if want_via[side] and stripped == f'({key} yes)':
+                        lines[i] = line.replace(f'({key} yes)', f'({key} no)')
+                        stats['vias_' + key] += 1
+                if stripped == ')':
+                    in_tenting = False
+    return '\n'.join(lines), stats
+
+
+_CLEARANCE_RE = re.compile(r'\(pad_to_mask_clearance\s+(-?[0-9.]+(?:[eE]-?\d+)?)\)')
+
+
+def mask_clearance_from_cam(cam):
+    """PADS CAM 솔더마스크 오버사이즈 -> 그에 해당하는 KiCad 보드 여유값(쪽당, mm) — **적용하지 않고 고지용**.
+    PADS 오버사이즈는 **전체 폭**에 더해진다 — PADS 마스크 거버 실측(BASIC 보드, 오버사이즈 0.254): 개구 = 패드 + 0.254
+    (스루홀 0.762 -> 1.016, SMD 1.4×1.0 -> 1.654×1.254)이므로 쪽당 절반. 앞·뒤 값이 다르면 작은 쪽. 값이 없으면 0."""
+    vals = [v['oversize_mm'] for v in (cam or {}).values() if v.get('pads') and v.get('oversize_mm') is not None]
+    return round(min(vals) / 2, 4) if vals else 0.0
+
+
+def fix_importer_mask_clearance(pcb_text, asc_text, cam=None):
+    """KiCad PADS 임포터가 넣은 보드 마스크 여유값(`pad_to_mask_clearance`)이 임포터 고정값이면 0 으로 바꾼다.
+
+    실측(2026-10-29, 코퍼스 PADS 보드 31개 전부): 임포터는 PADS 의 어떤 값도 읽지 않고 숫자 3 을 **파일 단위
+    그대로** 넣는다 — METRIC 파일은 3 mm(마스크가 패드보다 6 mm 크게 열림), BASIC 파일은 3 × (1 mil/38100) =
+    0.000002 mm. PADS 파일의 ARPTOM/SLMINMASK 를 바꿔 다시 임포트해도 값이 그대로여서 고정값임을 확인했다.
+
+    새 값은 0(KiCad 새 보드 기본값, 제조사가 공정에 맞춰 확장) — CAM 오버사이즈의 절반(`mask_clearance_from_cam`)을
+    넣으면 PADS 거버 크기와 같아지지만, 10 mil 오버사이즈면 0.5~0.65 mm 피치 IC 의 핀 사이 마스크(웹)가 사라진다
+    (샘플 보드 151쌍). 실제 제조 거버는 출력 때 오버사이즈를 줄인 사례가 있어(0.5 mm QFP 개구가 패드 + 0.1), 사용자
+    결정(2026-10-29)으로 0 + CAM 값 고지로 한다. `cam` 은 받지만 값 결정에는 쓰지 않는다(호출 호환).
+
+    값이 `3 × 파일 단위`(허용 오차 1 %)와 같을 때만 바꾼다(사용자가 KiCad 에서 직접 정한 값은 건드리지 않음).
+    반환값: (새 텍스트, 바꾸기 전 값 mm | None, 새 값 mm | None)."""
+    unit = _pads_unit_mm(asc_text)
+    m = _CLEARANCE_RE.search(pcb_text)
+    if unit is None or m is None:
+        return pcb_text, None, None
+    old = float(m.group(1))
+    bogus = 3 * unit
+    if old == 0 or abs(old - bogus) > bogus * 0.01:
+        return pcb_text, None, None
+    return pcb_text[:m.start(1)] + '0' + pcb_text[m.end(1):], old, 0.0
+
+
+# KiCad PADS 임포터는 레이어 종류(LAYER_TYPE)가 정해져 있으면 그대로 따르지만, UNASSIGNED 면 번호별 기본값을 쓴다.
+# 그 기본값 중 마스크로 가는 것(실측 2026-10-29, 레이어 5~30 을 하나씩 UNASSIGNED 로 바꿔 임포트): 25 -> F.Mask,
+# 28 -> B.Mask. PADS 에서 이 레이어는 CAM 마스크 문서가 그리지 않는 한 마스크와 무관하다(코퍼스 31개 전부 25 = UNASSIGNED).
+_IMPORTER_UNASSIGNED_TO_MASK = {25: 'F.Mask', 28: 'B.Mask'}
+_DECAL_HEAD_RE = re.compile(r'^(\S+)\s+[IMU]\s+-?[\d.]+\s+-?[\d.]+(?:\s+\d+){5}\s*$')
+_PIECE_RE = re.compile(r'^(OPEN|CLOSED|CIRCLE|COPOPN|COPCLS|COPCIR|KPTCLS|KPTCIR|KPTOPN)\s+(\d+)\s+(\S+)\s+\S+\s+(-?\d+)')
+_PADS_SECTION_RE = re.compile(r'\n\*(?!REMARK)[A-Z]+\*')
+
+
+def _pads_section(asc_text, name):
+    i = asc_text.find('\n*' + name + '*')
+    if i < 0:
+        return ''
+    m = _PADS_SECTION_RE.search(asc_text, i + 3)
+    return asc_text[i:m.start() if m else len(asc_text)]
+
+
+def pads_spurious_mask_layers(asc_text):
+    """임포터가 마스크로 보내지만 PADS 에서는 마스크가 아닌 레이어: {PADS 레이어 번호: KiCad 마스크 레이어}.
+    조건: 레이어 종류가 UNASSIGNED(정의가 없으면 판단 안 함)이고, 어떤 CAM 솔더마스크 문서도 그 레이어를 그리지 않음."""
+    types = {}
+    for m in _PADS_LAYER_RE.finditer(asc_text):
+        tm = re.search(r'LAYER_TYPE\s+(\w+)', m.group(2))
+        if tm:
+            types.setdefault(int(m.group(1)), tm.group(1).upper())
+    plotted = set()
+    for m in _CAM_DOC_RE.finditer(asc_text):
+        if re.search(r'DOC_PLOT_TYPE\s+Solder_Mask', m.group(1)):
+            nums = re.search(r'DOC_LAYER_NUMBERS\s+([^\n]*)', m.group(1))
+            if nums:
+                plotted |= {int(x) for x in nums.group(1).split() if x.isdigit()}
+    return {n: lay for n, lay in _IMPORTER_UNASSIGNED_TO_MASK.items()
+            if types.get(n) == 'UNASSIGNED' and n not in plotted}
+
+
+def _decal_pieces(asc_text, layers, unit):
+    """`*PARTDECAL*` 에서 `layers` 레이어 위 조각: {디칼 이름: [(폭 mm, [(x, y) mm …]), …]} (PADS 좌표, y 위가 양수)."""
+    out = {}
+    lines = _pads_section(asc_text, 'PARTDECAL').split('\n')
+    cur, i = None, 0
+    while i < len(lines):
+        line = lines[i].strip()
+        i += 1
+        pm = _PIECE_RE.match(line)
+        if pm:
+            n = int(pm.group(2))
+            coords = lines[i:i + n]
+            i += n
+            if cur is None or int(pm.group(4)) not in layers:
+                continue
+            try:
+                pts = [(float(c.split()[0]) * unit, float(c.split()[1]) * unit) for c in coords]
+                width = float(pm.group(3)) * unit
+            except (IndexError, ValueError):
+                continue
+            if pm.group(1) in ('CIRCLE', 'COPCIR', 'KPTCIR') and len(pts) == 2:
+                (x1, y1), (x2, y2) = pts
+                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                r = ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5 / 2
+                pts += [(cx, cy), (cx + r, cy), (cx - r, cy), (cx, cy + r), (cx, cy - r)]
+            out.setdefault(cur, []).append((width, pts))
+            continue
+        hm = _DECAL_HEAD_RE.match(line)
+        if hm:
+            cur = hm.group(1)
+    return out
+
+
+_PAREN_TOKEN_RE = re.compile(r'\\.|"|\(|\)')
+
+
+def _sexp_end(text, start):
+    """`text[start] == '('` 인 S-식의 끝(닫는 괄호 다음) 위치. 따옴표 안의 괄호는 무시."""
+    depth, quoted = 0, False
+    for m in _PAREN_TOKEN_RE.finditer(text, start):
+        tok = m.group()
+        if tok == '"':
+            quoted = not quoted
+        elif quoted or len(tok) == 2:
+            continue
+        elif tok == '(':
+            depth += 1
+        else:
+            depth -= 1
+            if depth == 0:
+                return m.end()
+    return len(text)
+
+
+_FP_GRAPHIC_RE = re.compile(r'\(fp_(?:line|rect|poly|circle|arc)\b')
+_GRAPHIC_PT_RE = re.compile(r'\((?:start|end|center|mid|xy)\s+(-?[\d.]+)\s+(-?[\d.]+)\)')
+
+
+def move_spurious_mask_graphics(pcb_text, asc_text):
+    """임포터가 PADS 의 마스크 아닌 레이어(`pads_spurious_mask_layers`) 그림을 F.Mask/B.Mask 에 넣은 것을 `Cmts.User` 로
+    옮긴다(지우지 않음 — 임포터가 다른 미지정 레이어 19·20 을 넣는 곳). PADS 에서는 마스크 거버에 나오지 않는 그림이다.
+
+    실측(2026-10-29): 샘플 U1(144핀 QFP) 디칼의 레이어 25(Layer_25, UNASSIGNED) 외곽선(폭 0.001 mm)이 F.Mask 로 들어가
+    KiCad DRC 마스크 위반 약 190건을 냈다. 코퍼스 PADS 보드 31개 중 2개에 같은 그림.
+
+    풋프린트 그림 중 마스크 레이어에 있고, 같은 이름 디칼의 해당 레이어 조각과 **모든 좌표점(앞·뒷면 뒤집기 허용, 0.005 mm)
+    과 선폭(±0.0005 mm + 1 %)이 맞는** 것만 옮긴다 — 디칼에 없는 마스크 그림은 그대로. 보드 단위 그림(`*LINES*`)은
+    코퍼스에 해당 사례가 없어 다루지 않는다. `layer` 토큰만 바꾸는 문자열 수정, 멱등.
+    반환값: (새 텍스트, {'moved': 옮긴 그림 수, 'footprints': 바뀐 풋프린트 수, 'layers': [PADS 레이어 번호]})."""
+    stats = {'moved': 0, 'footprints': 0, 'layers': []}
+    layers = pads_spurious_mask_layers(asc_text)
+    unit = _pads_unit_mm(asc_text)
+    if not layers or unit is None:
+        return pcb_text, stats
+    decals = _decal_pieces(asc_text, set(layers), unit)
+    if not decals:
+        return pcb_text, stats
+    stats['layers'] = sorted(layers)
+    mask_layers = set(layers.values()) | {'F.Mask', 'B.Mask'}   # 뒷면 배치 풋프린트는 면이 뒤집힌다
+    edits = []                                                  # (layer 토큰 시작, 끝)
+    pos = 0
+    while True:
+        i = pcb_text.find('(footprint "', pos)
+        if i < 0:
+            break
+        end = _sexp_end(pcb_text, i)
+        pos = end
+        name = pcb_text[i + 12:pcb_text.index('"', i + 12)].split(':')[-1]
+        pieces = decals.get(name)
+        if not pieces:
+            continue
+        before = len(edits)
+        for gm in _FP_GRAPHIC_RE.finditer(pcb_text, i + 1, end):
+            g_end = _sexp_end(pcb_text, gm.start())
+            body = pcb_text[gm.start():g_end]
+            lm = re.search(r'\(layer "([^"]+)"\)', body)
+            wm = re.search(r'\(width\s+(-?[\d.]+)\)', body)
+            if not lm or lm.group(1) not in mask_layers or not wm:
+                continue
+            w = float(wm.group(1))
+            pts = [(float(x), float(y)) for x, y in _GRAPHIC_PT_RE.findall(body)]
+            if not pts:
+                continue
+            for pw, ppts in pieces:
+                if abs(w - pw) > 0.0005 + 0.01 * pw:
+                    continue
+                cand = [(sx * x, sy * y) for x, y in ppts for sx in (1, -1) for sy in (1, -1)]
+                if all(any(abs(px - cx) <= 0.005 and abs(py - cy) <= 0.005 for cx, cy in cand) for px, py in pts):
+                    edits.append((gm.start() + lm.start(1), gm.start() + lm.end(1)))
+                    break
+        if len(edits) > before:
+            stats['footprints'] += 1
+    if not edits:
+        return pcb_text, stats
+    parts, last = [], 0
+    for a, b in edits:
+        parts += [pcb_text[last:a], 'Cmts.User']
+        last = b
+    parts.append(pcb_text[last:])
+    stats['moved'] = len(edits)
+    return ''.join(parts), stats
+
+
+def pads_missing_mask(pcb_text):
+    """마스크 개구가 빠진 도금 패드 수(검사만): {'front': 앞면 구리는 있는데 F.Mask 없는 수, 'back': …}.
+    CAM 정보가 없는 입력(직접 준 `.kicad_pcb`, CAM 문서 없는 PADS 파일)에서 경고용."""
+    _, st = restore_pad_mask_openings(pcb_text, {'top': {'pads': True}, 'bottom': {'pads': True}})
+    return {'front': st['pads_front'], 'back': st['pads_back']}
+
+
 @dataclass
 class BoardFootprint:
     ref: str

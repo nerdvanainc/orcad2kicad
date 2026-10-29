@@ -2,6 +2,24 @@
 
 이 파일은 orcad2kicad의 릴리스별 변경 사항을 기록합니다.
 
+## 1.0.6 (2026-10-29)
+
+PADS 보드를 함께 줄 때, KiCad PADS 임포터가 틀리게 옮기는 솔더마스크를 PADS 파일의 CAM 설정대로 바로잡습니다.
+
+- **PADS 보드 솔더마스크 정리**(`--board .asc`, 기본 켜짐, `--keep-board-masks` 로 끔): KiCad PADS 임포터의 세 결함을
+  임포트 직후 바로잡는다(출력 `.kicad_pcb`·`PADS.pretty` 공통, 패드 크기·구멍·배선·넷 불변).
+  (1) CAM 의 "솔더마스크에 패드 포함" 설정을 읽지 않아 스루홀 패드 마스크 개구가 없거나 뒷면만 빠지던 것을 `.asc` 의
+  CAM 솔더마스크 문서대로 `F.Mask`/`B.Mask` 복원(비아는 CAM 이 구리 비아를 그리는 면만 개구). (2) 보드 여유값
+  `pad_to_mask_clearance` 에 숫자 3 을 파일 단위 그대로 넣던 것(METRIC 3 mm, BASIC 0.000002 mm)을 0 으로. PADS CAM 패드
+  오버사이즈는 적용하지 않고 로그·`auto_changes.txt` 로 알린다(쪽당 환산값, 넣으면 미세 피치 IC 핀 사이 마스크가 사라질 수
+  있음). `kicad_board.pads_mask_cam` / `restore_pad_mask_openings` / `fix_importer_mask_clearance` /
+  `mask_clearance_from_cam`, `result.board_mask`(`cam_clearance`), 자동 변경 목록 `PCB:` 항목(EDIF 입력 경로도 이제 자동
+  변경을 고지). 실측: 비공개 실무 PADS 보드 31개 전부 해당(METRIC 14개는 여유값 3 mm), PADS 제조 거버와 대조해 개구 위치
+  90/90 일치. (3) 용도 미지정(UNASSIGNED) PADS 레이어 25/28 을 임포터가 F.Mask/B.Mask 로 보내 디칼의 문서용 그림이 마스크
+  개구가 되던 것을, CAM 마스크 문서가 그 레이어를 그리지 않을 때 디칼 조각과 좌표·선폭이 맞는 그림만 `Cmts.User` 로
+  옮김(`move_spurious_mask_graphics`, 샘플 10개 — KiCad DRC 마스크 위반 199 → 0).
+  `.kicad_pcb` 를 직접 주면 고치지 않고 개구 없는 패드 수만 경고.
+
 ## 1.0.5 (2026-10-29)
 
 `.DSN` 임포트 결과의 연결 오류(버스로 합쳐진 넷)를 고치고, 남는 숨은(투명) 라벨을 설명·선택할 수 있게 했으며, 도구가

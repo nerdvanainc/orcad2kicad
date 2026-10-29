@@ -148,6 +148,10 @@ def main(argv=None):
                           'had joined through the bus - verified with the netlist, reported as an auto change), '
                           'and keep wire ends touching a bus as drawn (default: redraw them with a shortened '
                           'wire and a 45-degree bus entry, netlist verified identical)')
+    ap.add_argument('--keep-board-masks', dest='board_mask_fix', action='store_false',
+                     help='with --board .asc: keep the solder mask as the KiCad PADS importer wrote it (default: '
+                          'restore the pad mask openings the PADS CAM settings plot, and reset the importer\'s '
+                          'constant board pad-to-mask clearance - 3 mm in METRIC files - to 0)')
     ap.add_argument('--board-net-names', choices=('schematic', 'pads'), default=None,
                      help='with --board: rename the output board nets to the schematic net names so '
                           '"Update PCB from Schematic" keeps every net name (schematic, default) or keep '
@@ -208,7 +212,7 @@ def main(argv=None):
         project=args.project, kicad_cli=args.kicad_cli, net_names=args.net_names,
         pdf=args.pdf, strict_board=args.strict_board, stable_format=args.stable_format,
         import_cleanup=args.import_cleanup, default_wire_width=args.default_wire_width,
-        split_bus_junctions=args.split_bus_junctions,
+        split_bus_junctions=args.split_bus_junctions, board_mask_fix=args.board_mask_fix,
         korean_font=args.korean_font, board_net_names=args.board_net_names,
         hidden_labels=args.hidden_labels,
         hidden_label_style=args.hidden_label_style,

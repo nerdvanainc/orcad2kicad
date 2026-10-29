@@ -44,7 +44,9 @@ What the importer does not do at all:
 - **PADS board link** — imports a PADS Layout ASCII board, extracts its footprints
   into `PADS.pretty`, fills the schematic footprint fields and compares board and
   schematic ([4]). Board net names are aligned with the schematic, so "Update PCB
-  from Schematic" does not rename nets.
+  from Schematic" does not rename nets. The solder mask the KiCad PADS importer gets wrong
+  (missing pad openings, a 3 mm clearance from metric files, documentation drawings put on the mask
+  layers) is fixed from the PADS CAM settings.
 - **Proof that the conversion is right** — net-by-net comparison with a PADS `.asc`
   or IPC-D-356 reference netlist ([3]). Every cleanup step is checked with a
   before/after kicad-cli netlist and undone if anything differs.
@@ -68,7 +70,7 @@ What the importer does not do at all:
   whether what is left comes from the original design or from the conversion. GUI
   (Korean/English), CLI and an MCP server.
 
-*Measured with orcad2kicad (2026-10-29 development build, in the next release) and the KiCad 10.99 nightly importer. ERC was run
+*Measured with orcad2kicad 1.0.5 (2026-10-29) and the KiCad 10.99 nightly importer. ERC was run
 with the kicad-cli that can open each result (nightly for the importer output,
 stable 10.0.7 for orcad2kicad's).*
 
@@ -147,7 +149,7 @@ Trademarks, the reverse-engineering statement, what is sent to an AI backend and
   Verify the download before trusting it:
 
   ```powershell
-  Get-FileHash orcad2kicad-1.0.5-win64.zip -Algorithm SHA256
+  Get-FileHash orcad2kicad-1.0.6-win64.zip -Algorithm SHA256
   ```
 
   Compare the output against the value in `SHA256SUMS.txt`.
@@ -255,7 +257,7 @@ switched from its language menu. The CLI's output is English/ASCII.
 
 ## Testing
 
-The full regression suite (about 590 tests) runs against reference designs
+The full regression suite (about 610 tests) runs against reference designs
 that cannot be published, so the sample-dependent tests are not part of this
 public tree. The sample-independent tests that are included — synthetic
 cases, the result explanation, GUI language tables, branding, and release

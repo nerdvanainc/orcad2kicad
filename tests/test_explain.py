@@ -300,7 +300,7 @@ class AutoChangeNoticeTest(unittest.TestCase):
         self.assertNotIn('hop_gaps', keys)                    # 0 개는 뺀다
         r.auto_changes = items
         ko = explain_result(r, 'ko')
-        self.assertIn('자동 변경: 도구가 회로도를 6가지로 직접 고침', ko[1])   # 입력 바로 아래
+        self.assertIn('자동 변경: 도구가 회로도·보드를 6가지로 직접 고침', ko[1])   # 입력 바로 아래
         text = '\n'.join(ko)
         self.assertIn("'MOTOR_DRV_CS1'=AIN1", text)
         self.assertIn('위 "자동 변경" 목록을 확인할 것', ko[-1])

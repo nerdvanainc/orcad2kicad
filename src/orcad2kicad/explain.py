@@ -250,9 +250,9 @@ def _auto_change_lines(result, lang):
     f = os.path.basename(result.files.get('auto_changes') or 'auto_changes.txt')
     L = []
     if items:
-        L.append((f'자동 변경: 도구가 회로도를 {len(items)}가지로 직접 고침(핀 연결은 단계마다 넷리스트로 대조) - '
+        L.append((f'자동 변경: 도구가 회로도·보드를 {len(items)}가지로 직접 고침(핀 연결은 단계마다 넷리스트로 대조) - '
                   f'전체 목록은 출력 폴더의 {f}' if ko
-                  else f'automatic changes: the tool edited the schematic in {len(items)} ways (connections verified '
+                  else f'automatic changes: the tool edited the schematic/board in {len(items)} ways (connections verified '
                        f'with the netlist at each step) - full list in {f} in the output folder'))
         for it in items:
             L.append(f"    - {it['ko'] if ko else it['en']}: {it['count']}"

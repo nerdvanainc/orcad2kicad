@@ -66,6 +66,8 @@ class PipelineOptions:
     split_bus_junctions: bool = True  # import_cleanup 의 일부: 배선이 버스에 직접 닿는 점의 junction 을 지워
                                        # 임포터가 버스로 잘못 합친 넷을 나눈다(나뉘기만 할 때만, 넷리스트
                                        # 대조) — 연결이 바뀌므로 자동 변경으로 고지. --keep-bus-junctions 로 끔.
+    board_mask_fix: bool = True  # --board(.asc): 임포터가 빠뜨린 패드 마스크 개구를 PADS CAM 설정대로 복원하고 임포터
+                                  # 고정값 보드 마스크 여유값(METRIC 3 mm 등)을 0 으로 — --keep-board-masks 로 끔.
     korean_font: str = 'Malgun Gothic'  # 한글이 든 글자·라벨·속성에 지정할 글꼴(EDIF·DSN 공통,
                                          # kicad_fonts). KiCad 기본/영문 글꼴은 한글을 못 그린다. '' = 끔.
     resolutions: Resolutions = field(default_factory=Resolutions)
@@ -99,6 +101,7 @@ class PipelineResult:
     ref_format: str = None               # 기준 넷리스트 형식 표시 이름('PADS ASCII' | 'IPC-D-356')
     footprint_sources: dict = field(default_factory=dict)  # ref -> 'board'|'netlist'|'' (kicad-project/dsn 모드)
     footprint_names_unset: int = 0       # 보드 없이 --netlist 만 줘서 넷리스트 풋프린트 이름을 비워 둔 ref 수
+    board_mask: dict = None              # 보드 솔더마스크 정리 결과(_fix_board_masks) — 없으면 None
 
 
 def summary(design):
@@ -441,6 +444,8 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
             return result
         result.files['board'] = board_pcb
         emit(f'board: {len(files)} footprints -> PADS.pretty, project board written')
+    # EDIF 경로의 자동 변경(보드 솔더마스크 정리, 중복 별칭 라벨 삭제)도 같은 방식으로 알린다.
+    _report_auto_changes(opts, result, emit)
 
     # ---- 4) kicad-cli: ERC / 3차 검증 / PDF ----
     if not cli_path:
@@ -642,6 +647,29 @@ def _auto_change_items(result):
             '남은 숨은 라벨을 보이는 라벨로' if hl['mode'] == 'show' else '남은 숨은 라벨 글자를 0.01 mm 로 줄임', '')
     add('dup_alias', result.duplicate_alias_removed, 'duplicate local alias labels removed',
         '같은 배선의 같은 이름 전역 라벨과 겹치는 지역 별칭 라벨 삭제', '도면에서 글자가 하나씩 사라짐')
+    bm = result.board_mask or {}
+    add('pad_masks', (bm.get('pads_front') or 0) + (bm.get('pads_back') or 0),
+        'PCB: pad-side solder mask openings restored from the PADS CAM settings (importer drops them)',
+        'PCB: KiCad PADS 임포터가 빠뜨린 패드 솔더마스크 개구(F.Mask/B.Mask, 패드 면 단위)를 PADS CAM 설정대로 복원',
+        '거버의 F.Mask/B.Mask 를 PADS 마스크 거버와 비교(패드 크기·구멍·배선은 그대로)')
+    add('via_masks', (bm.get('vias_front') or 0) + (bm.get('vias_back') or 0),
+        'PCB: via sides opened in the solder mask as the PADS CAM plots them',
+        'PCB: PADS CAM 이 구리 비아를 마스크에 그리는 면의 비아 텐팅 해제', '')
+    lays = '/'.join(map(str, bm.get('mask_graphics_layers') or []))
+    add('mask_graphics', bm.get('mask_graphics') or 0,
+        f'PCB: footprint drawings from PADS unassigned layer {lays} moved off the solder mask to Cmts.User '
+        '(importer maps that layer to the mask)',
+        f'PCB: PADS 의 용도 미지정 레이어 {lays} 그림(마스크와 무관)을 임포터가 솔더마스크에 넣은 것을 Cmts.User 로 옮김',
+        'PADS 에서 그 레이어를 마스크 용도로 쓴 적이 있으면 Cmts.User 에서 되돌림')
+    if bm.get('clearance_from') is not None:
+        cam_cl = bm.get('cam_clearance') or 0
+        check = 'Board Setup > Solder Mask/Paste 에서 제조사 기준 여유값이 따로 있으면 지정'
+        if cam_cl:
+            check = (f"PADS CAM 패드 오버사이즈는 {cam_cl * 2:g} mm(전체 폭)였음 — PADS 거버와 같은 크기가 필요하면 "
+                     f"Board Setup > Solder Mask/Paste 에 {cam_cl:g} mm 입력(미세 피치 IC 핀 사이 마스크가 사라질 수 있음)")
+        add('mask_clearance', 1,
+            f"PCB: board pad-to-mask clearance {bm['clearance_from']:g} mm (importer constant) -> 0 mm",
+            f"PCB: 임포터가 고정값으로 넣은 보드 마스크 여유값 {bm['clearance_from']:g} mm 를 0 mm 로", check)
     return items
 
 
@@ -656,7 +684,7 @@ def _report_auto_changes(opts, result, emit):
         return
     split_note = ('; bus junction removal SPLIT importer-merged nets' if (cl.get('bus_split') or {}).get('splits')
                   else '')
-    emit(f'AUTO CHANGES: the tool changed the schematic automatically in {len(items)} ways '
+    emit(f'AUTO CHANGES: the tool changed the schematic/board automatically in {len(items)} ways '
          f'(connections verified with the netlist{split_note}) - see {AUTO_CHANGES_FILE}:')
     for it in items:
         emit(f"  - {it['count']} {it['en']}")
@@ -673,10 +701,13 @@ def _report_auto_changes(opts, result, emit):
         emit('WARNING ' + msg)
         result.issues.append('WARNING ' + msg)
     lines = ['자동 변경 내역 (orcad2kicad)', '',
-             '이 도구가 임포트 결과 회로도를 자동으로 고친 내용입니다. 핀 연결은 각 단계마다 kicad-cli 넷리스트로',
-             '변경 전후를 대조했고, 다르면 그 단계를 되돌렸습니다. 넷 이름이 바뀌는 단계는 따로 표시했습니다.',
-             '단, 버스 접속점 삭제는 임포터가 잘못 합친 넷을 나누므로 연결이 바뀝니다("나뉜 넷" 참고).', '',
-             '[바꾼 것]']
+             '이 도구가 임포트 결과 회로도·보드를 자동으로 고친 내용입니다. 회로도의 핀 연결은 각 단계마다 kicad-cli',
+             '넷리스트로 변경 전후를 대조했고, 다르면 그 단계를 되돌렸습니다. 넷 이름이 바뀌는 단계는 따로 표시했습니다.']
+    if splits:
+        lines.append('단, 버스 접속점 삭제는 임포터가 잘못 합친 넷을 나누므로 연결이 바뀝니다("나뉜 넷" 참고).')
+    if any(it['key'].startswith(('pad_masks', 'via_masks', 'mask_graphics', 'mask_clearance')) for it in items):
+        lines.append('"PCB:" 항목은 보드(.kicad_pcb·PADS.pretty)의 솔더마스크만 바꾼 것입니다(패드 크기·구멍·배선·넷은 그대로).')
+    lines += ['', '[바꾼 것]']
     for it in items:
         lines.append(f"- {it['ko']}: {it['count']}개" + (f"  (확인: {it['check']})" if it['check'] else ''))
     if splits:
@@ -1047,6 +1078,7 @@ def _load_board_for_view(opts, result, emit, board_from_import):
         if board_from_import:
             # `.DSN` 과 함께 임포트한 보드를 그대로 쓴다(같은 임포터, 한 번만 실행).
             emit(f'board: {os.path.basename(board_from_import)} (from dsn import)')
+            _fix_board_masks(opts, result, emit, board_from_import)
             return load_board(board_from_import)
         if opts.board.lower().endswith('.asc'):
             cli_path = find_stable_cli(opts.kicad_cli)
@@ -1064,12 +1096,89 @@ def _load_board_for_view(opts, result, emit, board_from_import):
             rep = import_pads_board(cli_path, opts.board, pcb, os.path.join(imp_dir, 'board_import.json'))
             emit(f'board import: footprints={rep["statistics"]["footprints"]} '
                  f'tracks={rep["statistics"]["tracks"]} warnings={len(rep["warnings"])}')
+            _fix_board_masks(opts, result, emit, pcb)
             return load_board(pcb)
+        _fix_board_masks(opts, result, emit, opts.board, check_only=True)
         return load_board(opts.board)
     except (OSError, RuntimeError) as e:
         result.error = f'cannot read board: {e}'
         result.exit_code = 2
         return None
+
+
+def _fix_board_masks(opts, result, emit, pcb_path, check_only=False):
+    """PADS 보드 임포트 결과의 솔더마스크 결함을 바로잡는다(보드를 읽기 전 — PADS.pretty·프로젝트 보드에 그대로 반영).
+
+    (1) 패드 마스크 개구: KiCad 임포터는 PADS CAM 의 "솔더마스크에 패드 포함" 설정을 읽지 않아 스루홀 패드 개구가
+    빠지거나 한쪽만 남는다 → `.asc` 의 CAM 솔더마스크 문서대로 F.Mask/B.Mask 복원(비아도 CAM 이 구리 비아를 그리는
+    면만 개구). (2) 보드 여유값: 임포터가 숫자 3 을 파일 단위 그대로 넣는다(METRIC 3 mm, BASIC 0.000002 mm) → 0.
+    (3) 마스크 레이어 그림: 임포터가 PADS 의 용도 미지정 레이어 25/28 그림을 F.Mask/B.Mask 에 넣는다 → Cmts.User.
+    패드 크기·구멍·배선·넷은 그대로. `check_only`(사용자가 `.kicad_pcb` 를 직접 준 경우 — CAM 이 없음)면 고치지 않고
+    마스크 없는 도금 패드 수·의심스러운 여유값만 알린다. 결과는 `result.board_mask`."""
+    from .kicad_board import (fix_importer_mask_clearance, mask_clearance_from_cam, move_spurious_mask_graphics,
+                              pads_mask_cam, pads_missing_mask, restore_pad_mask_openings)
+    if not opts.board_mask_fix:
+        return
+    with open(pcb_path, encoding='utf-8', newline='') as fh:
+        text = fh.read()
+    info = {'cam': None, 'pads_front': 0, 'pads_back': 0, 'vias_front': 0, 'vias_back': 0, 'npth': 0,
+            'clearance_from': None, 'cam_clearance': 0.0, 'mask_graphics': 0, 'mask_graphics_layers': [],
+            'check_only': check_only, 'missing': None}
+    asc = None
+    if not check_only and opts.board.lower().endswith('.asc'):
+        with open(opts.board, encoding='latin-1') as fh:
+            asc = fh.read()
+    if asc is None:
+        miss = pads_missing_mask(text)
+        info['missing'] = miss
+        result.board_mask = info
+        if miss['front'] or miss['back']:
+            msg = (f"board: {miss['front']} plated pads have copper on the front but no F.Mask opening, "
+                   f"{miss['back']} on the back without B.Mask (PADS importer drops CAM mask settings; "
+                   'give the PADS .asc board to restore them)')
+            emit('WARNING ' + msg)
+            result.issues.append('WARNING ' + msg)
+        return
+    cam = pads_mask_cam(asc)
+    info['cam'] = cam
+    new, st = restore_pad_mask_openings(text, cam) if cam else (text, {})
+    info.update(st)
+    new, old, cl_new = fix_importer_mask_clearance(new, asc, cam)
+    info['clearance_from'] = old
+    info['clearance_to'] = cl_new
+    info['cam_clearance'] = mask_clearance_from_cam(cam)
+    new, gst = move_spurious_mask_graphics(new, asc)
+    info['mask_graphics'] = gst['moved']
+    info['mask_graphics_layers'] = gst['layers']
+    if new != text:
+        with open(pcb_path, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(new)
+    result.board_mask = info
+    parts = []
+    if cam:
+        sides = ', '.join(f"{s}: {'pads' if v['pads'] else 'no pads'}{' + vias' if v['vias'] else ''}"
+                          for s, v in sorted(cam.items()))
+        parts.append(f"PADS CAM solder mask ({sides}) -> {info['pads_front']} pads got F.Mask, "
+                     f"{info['pads_back']} got B.Mask, {info['vias_front'] + info['vias_back']} via sides opened")
+    else:
+        miss = pads_missing_mask(new)
+        info['missing'] = miss
+        if miss['front'] or miss['back']:
+            msg = (f"board: no solder mask CAM document in the PADS file, so {miss['front']} front / "
+                   f"{miss['back']} back plated pads without a mask opening were left as imported")
+            emit('WARNING ' + msg)
+            result.issues.append('WARNING ' + msg)
+    if old is not None:
+        parts.append(f'board pad-to-mask clearance {old:g} mm (importer constant) -> {cl_new:g} mm')
+    if info['mask_graphics']:
+        parts.append(f"{info['mask_graphics']} footprint drawings from PADS unassigned layer "
+                     f"{'/'.join(map(str, info['mask_graphics_layers']))} moved off the solder mask to Cmts.User")
+    if info['cam_clearance']:
+        parts.append(f"PADS CAM pad oversize {info['cam_clearance'] * 2:g} mm (full width) NOT applied - set "
+                     f"{info['cam_clearance']:g} mm in Board Setup > Solder Mask/Paste to match PADS gerbers "
+                     '(may remove mask webs between fine-pitch pins)')
+    if parts:
+        emit('board mask: ' + '; '.join(parts))
 
 
 def run_kicad_project(opts, result, emit):
@@ -1530,6 +1639,7 @@ def result_to_json(result: PipelineResult) -> dict:
             'log': list(result.log),
             'footprint_sources': dict(result.footprint_sources),
             'footprint_names_unset': result.footprint_names_unset,
+            'board_mask': result.board_mask,
             'kicad_cli': result.kicad_cli,
             'net_names': result.net_names,
             'ref_format': result.ref_format,
