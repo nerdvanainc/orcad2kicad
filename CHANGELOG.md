@@ -1,5 +1,7 @@
 # Changelog
 
+한국어(이 페이지) · English: [CHANGELOG.en.md](CHANGELOG.en.md)
+
 이 파일은 orcad2kicad의 릴리스별 변경 사항을 기록합니다.
 
 ## 1.0.6 (2026-10-29)

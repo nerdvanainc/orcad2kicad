@@ -1,4 +1,4 @@
-# orcad2kicad — OrCAD to KiCad schematic converter with netlist verification
+# orcad2kicad: OrCAD to KiCad schematic converter with netlist verification
 
 한국어 README: [README.md](README.md) · English (this page)
 
@@ -18,55 +18,52 @@ KiCad nightly (10.99) now ships an OrCAD importer that reads `.DSN`. Its output
 are cut at every crossing, off-page connectors survive only as drawings, thousands
 of labels that are invisible on screen print black in PDFs, and nothing links it to
 the PCB. orcad2kicad takes the importer's result, cleans all of that up, compares
-the netlist before and after every cleanup step to **prove connectivity did not
-change**, and then wires in the PADS board and footprints.
+the netlist before and after every cleanup step to confirm connectivity did not change, and then wires in the PADS board and footprints.
 
-## Why not just use the KiCad nightly importer?
+## Differences from the KiCad nightly importer
 
-If you only want to look at the design, the nightly importer is enough. If you
-want to **keep designing and carry on to the PCB**, these are the differences —
-measured on the public Raspberry Pi Compute Module IO Board V3 design (`.DSN`,
+If you only want to look at the design, the nightly importer is enough. If you want to keep designing and carry on to the PCB, these are the differences, measured on the public Raspberry Pi Compute Module IO Board V3 design (`.DSN`,
 3 pages, IPC-D-356 reference netlist with 152 nets):
 
 | | KiCad nightly importer alone | orcad2kicad |
 |---|---|---|
 | Opens in stable KiCad 10.0 | **No** ("Failed to load schematic", 10.99 format) | Yes (rebuilt as root sheet + sub-sheets in 10.0 format) |
-| ERC violations | **1,259** (dangling wire ends 687, off-grid endpoints 432, same local/global label 126, …) | **68** (no power flag 14, same local/global label 54) — with `--hidden-labels show --duplicate-alias-labels remove` on, **14** (only missing power flags) |
+| ERC violations | **1,259** (dangling wire ends 687, off-grid endpoints 432, same local/global label 126, …) | **68** (no power flag 14, same local/global label 54). With `--hidden-labels show --duplicate-alias-labels remove` on, **14** (only missing power flags) |
 | Wires at crossings | cut at every crossing, gap filled with graphic lines | merged into one wire (285 places) |
 | Off-page connectors | red drawing + text + hidden label | KiCad global labels (108) |
-| Hidden (transparent) labels | 1,335 — invisible on screen, **printed black in PDF/SVG** | 1,071 duplicates removed; the 4 left are listed with the reason, and you choose what to do |
-| Net names | page aliases and unnamed nets all joined through global labels | KiCad style (local labels) or keep the PADS/OrCAD names — your choice |
+| Hidden (transparent) labels | 1,335. Invisible on screen, printed black in PDF/SVG | 1,071 duplicates removed; the 4 left are listed with the reason, and you choose what to do |
+| Net names | page aliases and unnamed nets all joined through global labels | KiCad style (local labels) or keep the PADS/OrCAD names, selectable |
 | Drawing and text | KiCad default frame over the OrCAD title block, fixed wire width, broken Korean | blank frame, KiCad default wire width, Korean restored with a Korean font |
-| Netlist (vs IPC-D-356) | 152/152 match | 152/152 match — same connectivity before and after cleanup |
+| Netlist (vs IPC-D-356) | 152/152 match | 152/152 match, same connectivity before and after cleanup |
 
 What the importer does not do at all:
 
-- **PADS board link** — imports a PADS Layout ASCII board, extracts its footprints
+- PADS board link: imports a PADS Layout ASCII board, extracts its footprints
   into `PADS.pretty`, fills the schematic footprint fields and compares board and
   schematic ([4]). Board net names are aligned with the schematic, so "Update PCB
   from Schematic" does not rename nets. The solder mask the KiCad PADS importer gets wrong
   (missing pad openings, a 3 mm clearance from metric files, documentation drawings put on the mask
   layers) is fixed from the PADS CAM settings.
-- **Proof that the conversion is right** — net-by-net comparison with a PADS `.asc`
+- Conversion check: net-by-net comparison with a PADS `.asc`
   or IPC-D-356 reference netlist ([3]). Every cleanup step is checked with a
   before/after kicad-cli netlist and undone if anything differs.
-- **Warning for invisible net merges** — when a hidden label and a power symbol or label
-  with another name share a wire, KiCad silently joins the two nets (ERC shows a single
+- Warning for invisible net merges: when a hidden label and a power symbol or label
+  with another name share a wire, KiCad joins the two nets (ERC shows a single
   warning). orcad2kicad finds and reports this, and turns hidden power labels sitting
   directly on part pins into visible power symbols. You can also re-run a KiCad project
   you have already edited through `--kicad-project` to check it.
-- **Bus nets the importer merged are split back** — where a wire touches a bus without a
+- Bus nets the importer merged are split back: where a wire touches a bus without a
   bus entry, the importer puts a junction that KiCad reads as a real connection, joining
   every data line on that bus into one net. orcad2kicad removes those junctions (kept only
   if the netlist just splits), redraws the touch points with KiCad bus entries and lists
   every split net by name.
-- **Every automatic change is announced** — the log, an `auto_changes.txt` in the output
+- Every automatic change is announced: the log, an `auto_changes.txt` in the output
   folder and the result summary list what the tool changed and what to check; changes
   that alter connections come first.
-- **Nightly without installing it** — the nightly needed only to read `.DSN` is
+- Nightly without installing it: the nightly needed only to read `.DSN` is
   downloaded from the official site and just unpacked. The result is in 10.0 format,
   so everything afterwards happens in stable KiCad.
-- **Readable results** — verification and ERC grouped by type, with an explanation of
+- Readable results: verification and ERC grouped by type, with an explanation of
   whether what is left comes from the original design or from the conversion. GUI
   (Korean/English), CLI and an MCP server.
 
@@ -76,9 +73,9 @@ stable 10.0.7 for orcad2kicad's).*
 
 ## Screenshots
 
-| GUI main window (.DSN input, conversion log) | Results tab — netlist verification PASS |
+| GUI main window (.DSN input, conversion log) | Results tab: netlist verification PASS |
 |---|---|
-| ![orcad2kicad GUI main window converting an OrCAD .DSN file to KiCad](docs/images/gui-main-en.png) | ![orcad2kicad results tab — kicad-cli netlist vs reference netlist PASS, conclusion: no problems](docs/images/summary-en.png) |
+| ![orcad2kicad GUI main window converting an OrCAD .DSN file to KiCad](docs/images/gui-main-en.png) | ![orcad2kicad results tab: kicad-cli netlist vs reference netlist PASS, conclusion: no problems](docs/images/summary-en.png) |
 
 ![Converted schematic opened in KiCad 10](docs/images/kicad-result.png)
 
@@ -93,28 +90,23 @@ stable 10.0.7 for orcad2kicad's).*
 ## What it does
 
 - **OrCAD → KiCad conversion**: reads an OrCAD Capture `.DSN` file or an
-  EDIF 2.0.0 export and produces a stable KiCad 10.0 project — a root sheet
-  plus sub-sheets (`.kicad_sym` / `.kicad_sch` / `.kicad_pro`).
+  EDIF 2.0.0 export and produces a stable KiCad 10.0 project with a root sheet and sub-sheets (`.kicad_sym` / `.kicad_sch` / `.kicad_pro`).
 - **Netlist verification**: treats a PADS-exported `.asc` netlist, or an
   IPC-D-356/IPC-D-356A netlist exported from Cadence Allegro and other tools
   (both auto-detected from extension/content), as ground truth and
-  cross-checks the converted schematic's connectivity net by net — with an
-  EDIF input three independent ways (connectivity join, wire geometry,
-  kicad-cli-exported netlist: [1][2][3]), with a `.DSN` input via the
-  kicad-cli-exported netlist ([3]).
+  cross-checks the converted schematic's connectivity net by net. An EDIF input is checked three independent ways (connectivity join, wire geometry, kicad-cli-exported netlist: [1][2][3]), and a `.DSN` input through the kicad-cli-exported netlist ([3]).
 - **PADS board link**: given an existing PADS Layout ASCII board file,
   extracts its footprint library into `PADS.pretty`, fills in footprint
   fields on the schematic, and reports reference/pin differences between
-  board and schematic ([4]) — enough to run KiCad's Update PCB from
-  Schematic afterward.
+  board and schematic ([4]). You can then run KiCad's Update PCB from Schematic.
 - **Plain-language result summary**: verification results and ERC (Electrical
-  Rule Check) findings are summarized by type, not dumped as raw logs.
+  Rule Check) findings are summarized by type.
 - **Three interfaces**: a GUI (Korean/English), a CLI, and an MCP server so
   AI coding tools such as Claude Code can call the conversion/verification
   pipeline directly as a tool.
 - **Optional AI suggestions**: an AI backend (Claude Code CLI, Codex CLI, or
   the Claude API) can suggest pin-type guesses, net-diff explanations, and
-  review notes — suggestions only, never applied automatically. The
+  review notes. Suggestions are never applied automatically. The
   deterministic pipeline runs the same way with or without an AI backend
   configured.
 
@@ -133,14 +125,12 @@ Trademarks, the reverse-engineering statement, what is sent to an AI backend and
 
 - **Windows**: run the packaged `orcad2kicad.exe` / `orcad2kicad-cli.exe`, no
   Python required.
-- **From source** (Windows, Linux, or macOS): Python 3.10+, standard library
-  only — no third-party packages needed for the core pipeline.
+- **From source** (Windows, Linux, or macOS): Python 3.10+, standard library only. The core pipeline needs no third-party packages.
 - **Stable KiCad 10.0** with `kicad-cli` on the system, for normal conversion,
   ERC, and netlist export.
 - **KiCad nightly** is needed only to read `.DSN` files directly (stable
   KiCad does not yet ship the native `.DSN` importer). orcad2kicad fetches it
-  as a portable extract — it downloads and unzips the nightly build, never
-  runs an installer, so nothing is installed on your system.
+  as a portable extract: it downloads and unzips the nightly build and does not run an installer.
 
 ## Download
 
@@ -175,9 +165,8 @@ Trademarks, the reverse-engineering statement, what is sent to an AI backend and
 ## How do I convert an OrCAD schematic to KiCad?
 
 Point orcad2kicad at an EDIF 2.0.0 export from OrCAD Capture (or a native
-`.DSN` file — see below) and run the conversion. The pipeline is
-deterministic: the same input always produces the same output, with symbols,
-pins, nets, and coordinates translated by fixed rules, not by AI. The result
+`.DSN` file, see below) and run the conversion. The pipeline is
+deterministic: the same input always produces the same output, with symbols, pins, nets, and coordinates translated by fixed rules. The conversion itself does not use AI. The result
 is a stable KiCad 10.0 project with a root sheet and sub-sheets you can open
 directly. AI is used only for a handful of ambiguous, optional suggestions
 (such as guessing an unclear pin type); nothing it suggests is applied
@@ -189,20 +178,16 @@ Yes. KiCad nightly builds include a native `.DSN` importer. orcad2kicad
 drives that importer automatically, then reconstructs the result into the
 stable KiCad 10.0 file format. If you don't already have a nightly build,
 orcad2kicad's "prepare portable nightly" feature downloads the official
-nightly archive and extracts it — no installer is run, so nothing is
-installed on your system.
+nightly archive and extracts it without running an installer.
 
 ## How do I verify the conversion is correct?
 
-"Converted" and "converted correctly" are different claims. orcad2kicad
-treats a PADS-exported `.asc` netlist as the reference answer and compares
+orcad2kicad treats a PADS-exported `.asc` netlist as the reference answer and compares
 the converted KiCad schematic's connectivity against it net by net. With an
-EDIF input there are three independent checks — an EDIF connectivity join
-[1], wire geometry [2], and a netlist actually exported by kicad-cli [3];
-with a `.DSN` input the kicad-cli netlist check [3] applies. If you also
+EDIF input there are three independent checks: an EDIF connectivity join [1], wire geometry [2], and a netlist exported by kicad-cli [3]. With a `.DSN` input the kicad-cli netlist check [3] applies. If you also
 supply a board file, a fourth check [4] compares the routed board against
 the schematic (and, without a reference netlist, against the schematic
-netlist). All of this is summarized in plain language, not raw diff output.
+netlist). The results are summarized by type.
 
 ## How do I link my PADS board and use Update PCB from Schematic?
 
@@ -216,7 +201,7 @@ there.
 
 ## FAQ
 
-**EDIF or `.DSN` — which should I use?**
+**Should I use EDIF or `.DSN`?**
 Prefer `.DSN`: it needs no OrCAD installation, keeps title blocks and text
 placement closest to the original, and the result is written in the stable
 KiCad 10.0 format. The only extra is a portable KiCad nightly build that
@@ -230,8 +215,7 @@ work. KiCad nightly is only needed to read `.DSN` files directly without
 OrCAD.
 
 **Can I use this commercially?**
-Yes. orcad2kicad is MIT-licensed open source — free for personal and
-commercial use, source included.
+Yes. orcad2kicad is MIT-licensed open source, free for personal and commercial use, with source included.
 
 **Does this work on Linux or macOS?**
 The packaged `.exe` is Windows-only, but the tool is plain Python 3.10+
@@ -245,12 +229,12 @@ switched from its language menu. The CLI's output is English/ASCII.
 
 ## Documentation
 
-- [docs/Quick_Start.en.md](docs/Quick_Start.en.md) — quick start (English)
-- [docs/User_Manual.en.md](docs/User_Manual.en.md) — full user manual
+- [docs/Quick_Start.en.md](docs/Quick_Start.en.md): quick start (English)
+- [docs/User_Manual.en.md](docs/User_Manual.en.md): full user manual
   (English): installation, input preparation, GUI/CLI usage, reading
   verification results, AI backends, MCP registration, finishing up in
   KiCad, troubleshooting, known limitations
-- [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) — developer overview:
+- [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md): developer overview of
   architecture, coordinate conventions, verification stages, module map
 - Korean: [docs/Quick_Start.md](docs/Quick_Start.md),
   [docs/사용자설명서.md](docs/사용자설명서.md), [README.md](README.md)
@@ -259,9 +243,7 @@ switched from its language menu. The CLI's output is English/ASCII.
 
 The full regression suite (about 610 tests) runs against reference designs
 that cannot be published, so the sample-dependent tests are not part of this
-public tree. The sample-independent tests that are included — synthetic
-cases, the result explanation, GUI language tables, branding, and release
-checks — run and pass here and in CI on Windows and Ubuntu (see
+public tree. The sample-independent tests that are included (synthetic cases, the result explanation, GUI language tables, branding, and release checks) run and pass here and in CI on Windows and Ubuntu (see
 `.github/workflows/tests.yml`).
 
 ## Privacy
@@ -272,8 +254,7 @@ it, and (b) calls to an AI backend (Claude API, or a local `claude`/`codex`
 CLI) only if you have configured and enabled one for the optional suggestion
 features.
 
-When an AI backend is enabled, parts of your design data — net names, pin names, references,
-footprint names — are sent to the selected service (the Anthropic API, or the service behind
+When an AI backend is enabled, parts of your design data (net names, pin names, references, footprint names) are sent to the selected service (the Anthropic API, or the service behind
 the local CLI), and that service's terms and privacy policy apply to how it is processed. For
 confidential designs, check your organization's policy before enabling it. With the default
 (no backend) nothing is sent.
@@ -285,7 +266,7 @@ software policies.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Third-party components bundled in the Windows
+MIT. See [LICENSE](LICENSE). Third-party components bundled in the Windows
 executables are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## About Nerdvana Inc.
