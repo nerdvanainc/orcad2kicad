@@ -39,7 +39,8 @@ import sys
 import tempfile
 
 from .pipeline import (PipelineOptions, Resolutions, run_pipeline, result_to_json,
-                       _board_diff_to_json, _net_compare_to_json, summary)
+                       _board_diff_to_json, _net_compare_to_json, summary,
+                       pcb_board_error)
 from .kicad_netlist import find_kicad_cli
 
 from .branding import COMPANY, PRODUCT, VERSION as SERVER_VERSION
@@ -476,6 +477,9 @@ class Server:
         from .kicad_board import compare_board, format_board_diff, load_board, import_pads_board
         edf = _arg_str(args, 'edf', required=True)
         board_path = _arg_str(args, 'board', required=True)
+        msg = pcb_board_error(board_path)
+        if msg:
+            raise ToolError(msg)
         netlist = _arg_str(args, 'netlist')
         cli_path = find_kicad_cli(_arg_str(args, 'kicad_cli'))
         log(f'board_diff: {os.path.basename(edf)} vs {os.path.basename(board_path)}')

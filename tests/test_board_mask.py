@@ -135,6 +135,16 @@ class RestorePadMaskTest(unittest.TestCase):
 
 
 class ImporterClearanceTest(unittest.TestCase):
+    def test_oversize_is_in_internal_units_in_every_file_unit(self):
+        # 실측: 같은 보드를 METRIC·MILS·INCHES 로 내보내도 DOC_PAD_OVERSIZE 는 381000 그대로다.
+        for unit in ('BASIC', 'METRIC', 'MILS', 'INCHES'):
+            self.assertEqual(pads_mask_cam(_asc(unit))['top']['oversize_mm'], 0.254, unit)
+
+    def test_inches_constant_is_reset(self):
+        pcb = _PCB.replace('(pad_to_mask_clearance 3)', '(pad_to_mask_clearance 76.2)')
+        new, old, cl = fix_importer_mask_clearance(pcb, _asc('INCHES'), None)
+        self.assertEqual((old, cl), (76.2, 0.0))
+
     def test_metric_constant_no_oversize(self):
         asc = _asc('METRIC', oversize='0')
         out, old, new = fix_importer_mask_clearance(_PCB, asc, pads_mask_cam(asc))

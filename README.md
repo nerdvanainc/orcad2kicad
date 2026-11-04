@@ -123,7 +123,7 @@ kicad-cli로 실행(임포터 결과는 나이틀리, orcad2kicad 결과는 정�
   받을 수 있습니다. 다운로드 후 무결성을 확인하십시오.
 
   ```powershell
-  Get-FileHash orcad2kicad-1.0.6-win64.zip -Algorithm SHA256
+  Get-FileHash orcad2kicad-1.0.7-win64.zip -Algorithm SHA256
   ```
 
   출력된 해시 값을 `SHA256SUMS.txt`에 적힌 값과 비교해서 일치하는지
@@ -227,7 +227,7 @@ orcad2kicad는 보드에서 쓰인 풋프린트를 추출해 프로젝트 전용
 
 ## 테스트
 
-전체 회귀 테스트(약 610개)는 공개할 수 없는 참조 설계 데이터로 돌기 때문에
+전체 회귀 테스트(약 640개)는 공개할 수 없는 참조 설계 데이터로 돌기 때문에
 샘플 의존 테스트는 이 공개 트리에 들어 있지 않습니다. 포함된 샘플 비의존 테스트(합성 케이스, 결과 요약(explain), GUI 언어 표, 브랜딩, 릴리스 검사)는 이 트리에서 그대로 통과하며, Windows/Ubuntu CI(`.github/workflows/tests.yml`)
 에서 실행됩니다.
 

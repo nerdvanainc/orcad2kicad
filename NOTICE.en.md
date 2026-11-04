@@ -16,6 +16,8 @@ This document collects the notices about the scope of use, trademarks and respon
   included.** This project has not reverse-engineered any Cadence file format. The only formats it reads are
   EDIF 2.0.0 (an EIA open standard, as a text file the user exports from OrCAD), PADS ASCII (a documented
   text export produced by the user), IPC-D-356 (an IPC standard) and KiCad S-expressions (an open format).
+- **No PADS installation, license or files are required either.** PADS binary `.pcb` files are not read. The board
+  link uses only the ASCII text file the user exports from PADS.
 - **Rights to the input and responsibility for the output rest with the user.** You must hold the rights to
   the design files you convert and to the symbol/library graphics they contain (including what ends up in
   the extracted `orcad_import.kicad_sym`), and how the converted result is used is your responsibility.

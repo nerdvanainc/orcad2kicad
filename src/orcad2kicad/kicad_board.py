@@ -32,13 +32,18 @@ _CAM_DOC_RE = re.compile(r'CAM_DOC_NAME[^\n]*\n\s*\{(.*?)\n\s*\}', re.S)
 _PADS_LAYER_RE = re.compile(r'^LAYER\s+(\d+)\s*\n\s*\{(.*?)\n\s*\}', re.S | re.M)
 
 
+_PADS_BASIC_MM = 0.0254 / 38100      # PADS 내부 단위(1 mil = 38100) -> mm
+
+
 def _pads_unit_mm(asc_text):
-    """PADS ASCII 헤더의 단위 -> mm 배율(BASIC: 1 mil = 38100, MILS, METRIC). 모르면 None."""
+    """PADS ASCII 헤더의 단위 -> mm 배율(BASIC: 1 mil = 38100, MILS, INCHES, METRIC). 모르면 None."""
     head_line = asc_text[:80].upper()
     if 'BASIC' in head_line:
-        return 0.0254 / 38100
+        return _PADS_BASIC_MM
     if 'MILS' in head_line:
         return 0.0254
+    if 'INCHES' in head_line:
+        return 25.4
     if 'METRIC' in head_line or 'MM' in head_line:
         return 1.0
     return None
@@ -91,8 +96,9 @@ def pads_mask_cam(asc_text):
         cur = out.setdefault(side, {'pads': False, 'vias': False, 'oversize_mm': None})
         cur['pads'] |= on('DOC_PADS')
         cur['vias'] |= on('DOC_VIAS')
-        if over and unit is not None and cur['oversize_mm'] is None:
-            cur['oversize_mm'] = round(int(over.group(1)) * unit, 4)
+        if over and cur['oversize_mm'] is None:
+            # 파일 단위와 무관하게 내부 단위다(같은 보드의 METRIC·MILS·INCHES 출력이 모두 같은 값).
+            cur['oversize_mm'] = round(int(over.group(1)) * _PADS_BASIC_MM, 4)
     return out
 
 
@@ -205,7 +211,7 @@ def fix_importer_mask_clearance(pcb_text, asc_text, cam=None):
 # 그 기본값 중 마스크로 가는 것(실측 2026-10-29, 레이어 5~30 을 하나씩 UNASSIGNED 로 바꿔 임포트): 25 -> F.Mask,
 # 28 -> B.Mask. PADS 에서 이 레이어는 CAM 마스크 문서가 그리지 않는 한 마스크와 무관하다(코퍼스 31개 전부 25 = UNASSIGNED).
 _IMPORTER_UNASSIGNED_TO_MASK = {25: 'F.Mask', 28: 'B.Mask'}
-_DECAL_HEAD_RE = re.compile(r'^(\S+)\s+[IMU]\s+-?[\d.]+\s+-?[\d.]+(?:\s+\d+){5}\s*$')
+_DECAL_HEAD_RE = re.compile(r'^(\S+)\s+([IMU])\s+-?[\d.]+\s+-?[\d.]+(?:\s+\d+){5}\s*$')
 _PIECE_RE = re.compile(r'^(OPEN|CLOSED|CIRCLE|COPOPN|COPCLS|COPCIR|KPTCLS|KPTCIR|KPTOPN)\s+(\d+)\s+(\S+)\s+\S+\s+(-?\d+)')
 _PADS_SECTION_RE = re.compile(r'\n\*(?!REMARK)[A-Z]+\*')
 
@@ -236,11 +242,20 @@ def pads_spurious_mask_layers(asc_text):
             if types.get(n) == 'UNASSIGNED' and n not in plotted}
 
 
+def _decal_unit_mm(letter, file_unit):
+    """디칼 값의 mm 배율. BASIC 파일은 전부 내부 단위이고, 그 밖의 파일은 디칼 머리글의 단위(M: mm, I: mil)를 쓴다
+    (실측: 같은 보드를 MILS·INCHES 로 내보내도 M 디칼의 값은 mm 그대로다)."""
+    if file_unit == _PADS_BASIC_MM:
+        return file_unit
+    return {'M': 1.0, 'I': 0.0254}.get(letter, file_unit)
+
+
 def _decal_pieces(asc_text, layers, unit):
     """`*PARTDECAL*` 에서 `layers` 레이어 위 조각: {디칼 이름: [(폭 mm, [(x, y) mm …]), …]} (PADS 좌표, y 위가 양수)."""
     out = {}
     lines = _pads_section(asc_text, 'PARTDECAL').split('\n')
     cur, i = None, 0
+    decal_unit = unit
     while i < len(lines):
         line = lines[i].strip()
         i += 1
@@ -252,8 +267,8 @@ def _decal_pieces(asc_text, layers, unit):
             if cur is None or int(pm.group(4)) not in layers:
                 continue
             try:
-                pts = [(float(c.split()[0]) * unit, float(c.split()[1]) * unit) for c in coords]
-                width = float(pm.group(3)) * unit
+                pts = [(float(c.split()[0]) * decal_unit, float(c.split()[1]) * decal_unit) for c in coords]
+                width = float(pm.group(3)) * decal_unit
             except (IndexError, ValueError):
                 continue
             if pm.group(1) in ('CIRCLE', 'COPCIR', 'KPTCIR') and len(pts) == 2:
@@ -266,6 +281,7 @@ def _decal_pieces(asc_text, layers, unit):
         hm = _DECAL_HEAD_RE.match(line)
         if hm:
             cur = hm.group(1)
+            decal_unit = _decal_unit_mm(hm.group(2), unit)
     return out
 
 
@@ -357,6 +373,138 @@ def move_spurious_mask_graphics(pcb_text, asc_text):
     parts.append(pcb_text[last:])
     stats['moved'] = len(edits)
     return ''.join(parts), stats
+
+
+_PAD_STACK_HEAD_RE = re.compile(r'^PAD\s+(\d+)\s+(\d+)\s*$')
+_DECAL_TERMINAL_RE = re.compile(r'^T\s*-?[\d.]+\s+-?[\d.]+\s+-?[\d.]+\s+-?[\d.]+\s+(\S+)\s*$')
+_PAD_DRILL_FIELD = {'R': 3, 'S': 4, 'A': 4, 'RF': 7, 'OF': 6}    # 패드 스택 윗면 줄에서 구멍 지름이 있는 자리
+_BOTTOM_PAD_SHAPES = {'R': 'circle', 'S': 'rect'}                # 옮길 수 있는 PADS 패드 모양 -> KiCad 모양
+_SMD_PAD_HEAD_RE = re.compile(r'^(\s*\(pad\s+"((?:[^"\\]|\\.)*)"\s+smd\s+)(\S+)(.*)$')
+_FOOTPRINT_HEAD_RE = re.compile(r'^\s*\(footprint\s+"((?:[^"\\]|\\.)*)"')
+
+
+def _bottom_only_stack(records, unit):
+    """패드 스택 줄 목록이 바닥층 전용이면 (PADS 모양, 크기 mm), 아니면 None.
+
+    바닥층 전용 = 구멍 없음, 윗면(-2)·내층(-1) 크기 0, 바닥면(0) 크기 > 0, 그 밖의 레이어 지정 없음. 해석할 수 없는
+    줄이 있으면 None(건드리지 않는 쪽이 안전하다)."""
+    bottom = None
+    for rec in records:
+        tok = rec.split()
+        try:
+            layer, width, shape = int(tok[0]), float(tok[1]), tok[2]
+        except (IndexError, ValueError):
+            return None
+        if layer == 0:
+            bottom = (shape, width * unit) if width > 0 else None
+        elif width > 0:
+            return None
+        if layer == -2:
+            field_no = _PAD_DRILL_FIELD.get(shape)
+            if field_no is None:
+                return None
+            try:
+                if len(tok) > field_no and float(tok[field_no]) > 0:
+                    return None
+            except ValueError:
+                return None
+    return bottom
+
+
+def pads_bottom_only_pins(asc_text):
+    """`*PARTDECAL*` 에서 바닥층 전용 패드를 찾는다: ({디칼: {핀 이름: (KiCad 모양, 크기 mm)}}, {디칼: 못 옮기는 PADS 모양}).
+
+    `PAD 0` 은 기본 스택이라 자기 `PAD n` 이 없는 핀에만 적용된다(n 은 `T` 줄의 순번, 핀 이름은 그 줄의 마지막 값)."""
+    unit = _pads_unit_mm(asc_text)
+    if unit is None:
+        return {}, {}
+    pins, unsupported = {}, {}
+
+    def finish(decal, decal_unit, terminals, stacks):
+        for index, name in enumerate(terminals, 1):
+            found = _bottom_only_stack(stacks.get(index, stacks.get(0, ())), decal_unit)
+            if found is None:
+                continue
+            shape = _BOTTOM_PAD_SHAPES.get(found[0])
+            if shape:
+                pins.setdefault(decal, {})[name] = (shape, found[1])
+            else:
+                unsupported[decal] = found[0]
+
+    lines = _pads_section(asc_text, 'PARTDECAL').split('\n')
+    decal, decal_unit, terminals, stacks = None, unit, [], {}
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        i += 1
+        hm = _DECAL_HEAD_RE.match(line)
+        if hm:
+            if decal:
+                finish(decal, decal_unit, terminals, stacks)
+            decal, terminals, stacks = hm.group(1), [], {}
+            decal_unit = _decal_unit_mm(hm.group(2), unit)
+            continue
+        tm = _DECAL_TERMINAL_RE.match(line)
+        if tm:
+            terminals.append(tm.group(1))
+            continue
+        sm = _PAD_STACK_HEAD_RE.match(line)
+        if sm:
+            n = int(sm.group(2))
+            stacks[int(sm.group(1))] = [r.strip() for r in lines[i:i + n]]
+            i += n
+    if decal:
+        finish(decal, decal_unit, terminals, stacks)
+    return pins, unsupported
+
+
+def fix_bottom_only_pads(pcb_text, asc_text):
+    """임포터가 0.001 mm 로 만든 바닥층 전용 SMD 패드를 실제 면·크기로 되돌린다(문자열 수정, 다른 내용 불변).
+
+    임포터는 패드 스택의 윗면 크기만 읽어, 윗면 크기가 0 인 패드를 부품 면에 `(size 0.001 0.001)` 로 만든다. 구리가
+    사라져 배선이 끊겨 보이지만 넷 연결표는 그대로라 [4] 는 PASS 다. 같은 크기로 나오는 무도금 홀·구멍만 있는 패드는
+    정상이므로 `.asc` 의 스택이 바닥층 전용인 SMD 핀만 고친다. 레이어는 앞뒤를 맞바꾼다(아랫면 부품은 윗면으로 간다).
+
+    반환값: (새 텍스트, {'moved': 옮긴 패드 수, 'decals': 해당 디칼 이름 목록, 'unsupported': {디칼: 못 옮기는 모양}}). 멱등."""
+    pins, unsupported = pads_bottom_only_pins(asc_text)
+    stats = {'moved': 0, 'decals': [], 'unsupported': dict(unsupported)}
+    if not pins:
+        return pcb_text, stats
+    lines = pcb_text.split('\n')
+    decal = target = None
+    head = size_at = None        # 고칠 후보 패드의 머리 줄 번호, 그 패드의 0.001 크기 줄 번호
+    for i, line in enumerate(lines):
+        fm = _FOOTPRINT_HEAD_RE.match(line)
+        if fm:
+            decal = fm.group(1).rsplit(':', 1)[-1]
+            head = size_at = None
+            continue
+        if line.lstrip().startswith('(pad '):
+            pm = _SMD_PAD_HEAD_RE.match(line)
+            target = pins.get(decal, {}).get(pm.group(2)) if pm else None
+            head = i if target else None
+            size_at = None
+            continue
+        if head is None:
+            continue
+        if line.strip() == '(size 0.001 0.001)':
+            size_at = i
+            continue
+        lm = _LAYERS_LINE_RE.match(line)
+        if lm:
+            if size_at is not None:
+                shape, size = target
+                text = f'{size:.6f}'.rstrip('0').rstrip('.')
+                hm = _SMD_PAD_HEAD_RE.match(lines[head])
+                lines[head] = hm.group(1) + shape + hm.group(4)
+                lines[size_at] = lines[size_at].replace('(size 0.001 0.001)', f'(size {text} {text})')
+                swapped = re.sub(r'"([FB])\.', lambda m: '"' + ('B' if m.group(1) == 'F' else 'F') + '.', lm.group(2))
+                lines[i] = lm.group(1) + swapped + lm.group(3)
+                stats['moved'] += 1
+                if decal not in stats['decals']:
+                    stats['decals'].append(decal)
+            head = size_at = None
+    return '\n'.join(lines), stats
 
 
 def pads_missing_mask(pcb_text):

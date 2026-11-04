@@ -139,7 +139,7 @@ Trademarks, the reverse-engineering statement, what is sent to an AI backend and
   Verify the download before trusting it:
 
   ```powershell
-  Get-FileHash orcad2kicad-1.0.6-win64.zip -Algorithm SHA256
+  Get-FileHash orcad2kicad-1.0.7-win64.zip -Algorithm SHA256
   ```
 
   Compare the output against the value in `SHA256SUMS.txt`.
@@ -241,7 +241,7 @@ switched from its language menu. The CLI's output is English/ASCII.
 
 ## Testing
 
-The full regression suite (about 610 tests) runs against reference designs
+The full regression suite (about 640 tests) runs against reference designs
 that cannot be published, so the sample-dependent tests are not part of this
 public tree. The sample-independent tests that are included (synthetic cases, the result explanation, GUI language tables, branding, and release checks) run and pass here and in CI on Windows and Ubuntu (see
 `.github/workflows/tests.yml`).

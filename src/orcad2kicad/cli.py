@@ -152,6 +152,9 @@ def main(argv=None):
                      help='with --board .asc: keep the solder mask as the KiCad PADS importer wrote it (default: '
                           'restore the pad mask openings the PADS CAM settings plot, and reset the importer\'s '
                           'constant board pad-to-mask clearance - 3 mm in METRIC files - to 0)')
+    ap.add_argument('--keep-board-pads', dest='board_pad_fix', action='store_false',
+                     help='with --board .asc: keep bottom-only SMD pads as the KiCad PADS importer wrote them '
+                          '(default: restore their real layer and size from the PADS pad stack)')
     ap.add_argument('--board-net-names', choices=('schematic', 'pads'), default=None,
                      help='with --board: rename the output board nets to the schematic net names so '
                           '"Update PCB from Schematic" keeps every net name (schematic, default) or keep '
@@ -212,7 +215,7 @@ def main(argv=None):
         project=args.project, kicad_cli=args.kicad_cli, net_names=args.net_names,
         pdf=args.pdf, strict_board=args.strict_board, stable_format=args.stable_format,
         import_cleanup=args.import_cleanup, default_wire_width=args.default_wire_width,
-        split_bus_junctions=args.split_bus_junctions, board_mask_fix=args.board_mask_fix,
+        split_bus_junctions=args.split_bus_junctions, board_mask_fix=args.board_mask_fix, board_pad_fix=args.board_pad_fix,
         korean_font=args.korean_font, board_net_names=args.board_net_names,
         hidden_labels=args.hidden_labels,
         hidden_label_style=args.hidden_label_style,

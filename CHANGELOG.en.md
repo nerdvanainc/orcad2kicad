@@ -4,6 +4,23 @@
 
 This file records the changes in each orcad2kicad release.
 
+## 1.0.7 (2026-11-04)
+
+Fixes bottom-only pads lost by the PADS importer and PADS unit handling.
+
+- **`.pcb` board message**: giving a PADS binary `.pcb` to `--board` ended with an exception. It now ends with exit code 2 and
+  a message to export ASCII in PADS.
+- **PADS unit handling fixes**: `INCHES` files were not recognized, which left the importer's 76.2 mm mask clearance in place.
+  CAM `DOC_PAD_OVERSIZE` is in internal units in every file, but it was converted with the file unit, so the advice for METRIC
+  files came out as hundreds of thousands of mm. Decal values now use the decal's own unit in files other than BASIC.
+- **PADS bottom-only pad restoration** (`--board .asc`, on by default, `--keep-board-pads` turns it off): SMD pads whose pad
+  stack has top size 0 and bottom size > 0 (for example hot-swap sockets soldered on the back) were created by the KiCad PADS
+  importer as 0.001 mm pads on the part side. They now get their real layer and size from the per-pin pad stacks in the `.asc`
+  (applies to both the output `.kicad_pcb` and `PADS.pretty`). Non-plated holes and drilled pads that import at the same size
+  are left alone. `kicad_board.pads_bottom_only_pins` / `fix_bottom_only_pads`, `result.board_pads`, a `PCB:` entry in the
+  automatic changes list. Measured: DRC unconnected items on two boards went from 5 to 0 and from 2 to 0; no pad was changed
+  by mistake on 31 private production PADS boards.
+
 ## 1.0.6 (2026-10-29)
 
 When a PADS board is supplied, the solder mask that the KiCad PADS importer transfers incorrectly is corrected from the CAM settings in the PADS file.

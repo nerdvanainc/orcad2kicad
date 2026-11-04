@@ -159,6 +159,11 @@ def AGENT_LABELS():
             ('review', t('agent_review')))
 
 
+# 결과 탭 파일 표의 표시 순서(여기에 없는 키는 뒤에 이름순으로 붙는다)
+RESULT_FILE_ORDER = ('root_sch', 'pro', 'lib', 'board', 'pdf', 'erc_json',
+                     'netlist_txt')
+
+
 def FILE_LABELS():
     """결과 탭에 보일 파일 종류 이름."""
     return {'root_sch': t('file_root_sch'), 'lib': t('file_lib'), 'pro': t('file_pro'),
@@ -1624,7 +1629,7 @@ class App(tk.Tk if tk is not None else object):
             self.files_note.pack_forget()
         self.file_tree.delete(*self.file_tree.get_children())
         labels = FILE_LABELS()
-        for key in ('root_sch', 'pro', 'lib', 'board', 'pdf', 'erc_json', 'netlist_txt'):
+        for key in RESULT_FILE_ORDER:
             if key in self.files:
                 self.file_tree.insert('', 'end', values=(labels.get(key, key), self.files[key]))
         for key, path in sorted(self.files.items()):

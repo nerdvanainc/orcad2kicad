@@ -68,6 +68,8 @@ class PipelineOptions:
                                        # 대조) — 연결이 바뀌므로 자동 변경으로 고지. --keep-bus-junctions 로 끔.
     board_mask_fix: bool = True  # --board(.asc): 임포터가 빠뜨린 패드 마스크 개구를 PADS CAM 설정대로 복원하고 임포터
                                   # 고정값 보드 마스크 여유값(METRIC 3 mm 등)을 0 으로 — --keep-board-masks 로 끔.
+    board_pad_fix: bool = True   # --board(.asc): 임포터가 0.001 mm 로 만든 바닥층 전용 SMD 패드를 실제 면·크기로
+                                  # 되돌린다 — --keep-board-pads 로 끔.
     korean_font: str = 'Malgun Gothic'  # 한글이 든 글자·라벨·속성에 지정할 글꼴(EDIF·DSN 공통,
                                          # kicad_fonts). KiCad 기본/영문 글꼴은 한글을 못 그린다. '' = 끔.
     resolutions: Resolutions = field(default_factory=Resolutions)
@@ -102,6 +104,7 @@ class PipelineResult:
     footprint_sources: dict = field(default_factory=dict)  # ref -> 'board'|'netlist'|'' (kicad-project/dsn 모드)
     footprint_names_unset: int = 0       # 보드 없이 --netlist 만 줘서 넷리스트 풋프린트 이름을 비워 둔 ref 수
     board_mask: dict = None              # 보드 솔더마스크 정리 결과(_fix_board_masks) — 없으면 None
+    board_pads: dict = None              # 바닥층 전용 패드 복원 결과(_fix_board_pads) — 없으면 None
 
 
 def summary(design):
@@ -298,6 +301,17 @@ def input_mode(opts):
                       '): pass an EDIF file, --kicad-project PRO or --dsn FILE')
 
 
+PCB_REJECTED_MSG = ('cannot read board: {name} is a PADS binary file. Export ASCII in PADS Layout '
+                    '(File > Export > ASCII) and give the .asc file.')
+
+
+def pcb_board_error(board):
+    """보드가 PADS 바이너리 `.pcb` 면 거부 메시지를, 아니면 None 을 돌려준다(MCP 와 공용)."""
+    if board and str(board).lower().endswith('.pcb'):
+        return PCB_REJECTED_MSG.format(name=os.path.basename(str(board)))
+    return None
+
+
 def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
     """옵션대로 변환·검증을 수행하고 결과를 담은 PipelineResult 를 돌려준다.
 
@@ -316,6 +330,12 @@ def run_pipeline(opts: PipelineOptions, log=None) -> PipelineResult:
     # ---- 0) 입력 모드 결정 ----
     mode, err = input_mode(opts)
     result.input_mode = mode
+    if err:
+        result.error = err
+        result.exit_code = 2
+        return result
+    # ---- 0b) PADS 바이너리 .pcb 보드는 읽지 않는다(ASCII 내보내기를 안내하고 종료) ----
+    err = pcb_board_error(opts.board)
     if err:
         result.error = err
         result.exit_code = 2
@@ -647,6 +667,10 @@ def _auto_change_items(result):
             '남은 숨은 라벨을 보이는 라벨로' if hl['mode'] == 'show' else '남은 숨은 라벨 글자를 0.01 mm 로 줄임', '')
     add('dup_alias', result.duplicate_alias_removed, 'duplicate local alias labels removed',
         '같은 배선의 같은 이름 전역 라벨과 겹치는 지역 별칭 라벨 삭제', '도면에서 글자가 하나씩 사라짐')
+    add('bottom_pads', (result.board_pads or {}).get('moved') or 0,
+        'PCB: bottom-only SMD pads restored to their real layer and size (importer reads only the top size)',
+        'PCB: KiCad PADS 임포터가 윗면 0.001 mm 로 만든 바닥층 전용 SMD 패드를 실제 면·크기로 복원',
+        '해당 부품의 패드 면과 크기를 PADS 와 비교')
     bm = result.board_mask or {}
     add('pad_masks', (bm.get('pads_front') or 0) + (bm.get('pads_back') or 0),
         'PCB: pad-side solder mask openings restored from the PADS CAM settings (importer drops them)',
@@ -1078,6 +1102,7 @@ def _load_board_for_view(opts, result, emit, board_from_import):
         if board_from_import:
             # `.DSN` 과 함께 임포트한 보드를 그대로 쓴다(같은 임포터, 한 번만 실행).
             emit(f'board: {os.path.basename(board_from_import)} (from dsn import)')
+            _fix_board_pads(opts, result, emit, board_from_import)
             _fix_board_masks(opts, result, emit, board_from_import)
             return load_board(board_from_import)
         if opts.board.lower().endswith('.asc'):
@@ -1096,6 +1121,7 @@ def _load_board_for_view(opts, result, emit, board_from_import):
             rep = import_pads_board(cli_path, opts.board, pcb, os.path.join(imp_dir, 'board_import.json'))
             emit(f'board import: footprints={rep["statistics"]["footprints"]} '
                  f'tracks={rep["statistics"]["tracks"]} warnings={len(rep["warnings"])}')
+            _fix_board_pads(opts, result, emit, pcb)
             _fix_board_masks(opts, result, emit, pcb)
             return load_board(pcb)
         _fix_board_masks(opts, result, emit, opts.board, check_only=True)
@@ -1104,6 +1130,30 @@ def _load_board_for_view(opts, result, emit, board_from_import):
         result.error = f'cannot read board: {e}'
         result.exit_code = 2
         return None
+
+
+def _fix_board_pads(opts, result, emit, pcb_path):
+    """임포터가 0.001 mm 로 만든 바닥층 전용 SMD 패드를 `.asc` 의 패드 스택대로 되돌린다(보드를 읽기 전 — PADS.pretty·
+    프로젝트 보드에 그대로 반영). 결과는 `result.board_pads`. 고칠 수 없는 패드 모양은 경고로 알린다."""
+    from .kicad_board import fix_bottom_only_pads
+    if not opts.board_pad_fix or not opts.board.lower().endswith('.asc'):
+        return
+    with open(pcb_path, encoding='utf-8', newline='') as fh:
+        text = fh.read()
+    with open(opts.board, encoding='latin-1') as fh:
+        asc = fh.read()
+    new, stats = fix_bottom_only_pads(text, asc)
+    if new != text:
+        with open(pcb_path, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(new)
+    result.board_pads = stats
+    if stats['moved']:
+        emit(f"board pads: {stats['moved']} bottom-only SMD pads restored ({', '.join(stats['decals'])})")
+    for decal, shape in sorted(stats['unsupported'].items()):
+        msg = (f'board: footprint {decal} has bottom-only pads of PADS shape {shape}, which cannot be restored '
+               'automatically; they stay as 0.001 mm pads on the part side')
+        emit('WARNING ' + msg)
+        result.issues.append('WARNING ' + msg)
 
 
 def _fix_board_masks(opts, result, emit, pcb_path, check_only=False):
@@ -1640,6 +1690,7 @@ def result_to_json(result: PipelineResult) -> dict:
             'footprint_sources': dict(result.footprint_sources),
             'footprint_names_unset': result.footprint_names_unset,
             'board_mask': result.board_mask,
+            'board_pads': result.board_pads,
             'kicad_cli': result.kicad_cli,
             'net_names': result.net_names,
             'ref_format': result.ref_format,

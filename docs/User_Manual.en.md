@@ -538,6 +538,8 @@ actual routed PADS board.
    (it's read as-is, without re-importing). In that case the solder mask cleanup of section 4.5 cannot
    run (there is no PADS CAM information) and only a warning is shown.
 
+A PADS binary `.pcb` cannot be used directly. Giving one ends with exit code 2 and a message to export the `.asc` as above.
+
 ### 4.5 PADS board solder mask cleanup (on by default, `--keep-board-masks` turns it off)
 
 The KiCad PADS board importer has three solder mask defects. They have nothing to do with the schematic, and
@@ -587,6 +589,21 @@ clearance, KiCad rounds the corners of rectangular pad openings by the clearance
 (c) PADS boards whose pad stacks list explicit mask sizes can be 0 to 0.1 mm (full width) larger per pad (per-pad
 values are not carried over). Before manufacturing, overlay
 KiCad's F.Mask/B.Mask Gerbers on the PADS mask Gerbers.
+
+### 4.6 PADS bottom-only pad restoration (on by default, `--keep-board-pads` turns it off)
+
+Some parts sit on the top side but have pads only on the bottom layer. A hot-swap socket soldered on the back of the board
+is one example. Its PADS pad stack has top size 0 and a bottom size above 0. The KiCad importer reads only the top size and
+creates a 0.001 mm pad on the part side, so the real copper is lost and traces to that pad show as unconnected in DRC. The
+net table is still correct, so [4] passes.
+
+When an `.asc` board is given, the per-pin pad stacks are read and these SMD pads get their layer and size back. The result
+applies to both the output `.kicad_pcb` and `PADS.pretty`, and appears on the `board pads:` log line and as a `PCB:` entry in
+`auto_changes.txt`.
+
+- Non-plated holes and drilled pads that import at the same 0.001 mm size are correct and are not changed.
+- Square and round pads can be restored. Other shapes are left as they are and a warning is shown.
+- A `.kicad_pcb` given directly has no pad stack data, so it is not changed.
 
 ## 5. Using the GUI
 
@@ -964,6 +981,7 @@ re-check as the version advances):
 | `--board BOARD` | PADS board (`.asc` is imported via kicad-cli; `.kicad_pcb` is read as-is) | none |
 | `--net-names {kicad,keep}` | `kicad`: KiCad-style names without artificial global labels (aliases local, unnamed nets `Net-(...)`; for `.DSN`/KiCad project the importer's hidden global labels are removed after a netlist check). `keep`: keep PADS/OrCAD names via global labels (old behaviour) | `kicad` |
 | `--board-net-names {schematic,pads}` | With `--board`: `schematic` renames output board nets to the schematic names (no renames in Update PCB); `pads` keeps PADS names | `schematic` |
+| `--keep-board-pads` | With `--board .asc`: keep bottom-only SMD pads as the KiCad PADS importer wrote them (default: the section 4.6 restoration). |
 | `--keep-board-masks` | With `--board .asc`: keep the solder mask as the KiCad PADS importer wrote it (default: the section 4.5 cleanup — restore missing pad mask openings, correct the importer's constant clearance) | cleanup on |
 | `--duplicate-alias-labels {keep,remove}` | `remove` deletes a local alias label that sits on the same wire as a visible global label of the same name (OrCAD habit: alias next to an off-page connector). Removes ERC `same_local_global_label` warnings, but the drawing loses one text each. Netlist-verified, reverted if it differs. EDIF and `.DSN` | `keep` |
 | `--hidden-labels {keep,show,shrink}` | `.DSN`/KiCad project only. What to do with transparent labels left after cleanup (they carry real connections). `keep`: as imported (plotted black in PDF/SVG). `show`: turn them into visible global labels (the drawing gains labels). `shrink`: text 0.01 mm so PDF/SVG hide them too (the connection then has no visible label). `show`/`shrink` are netlist-verified and reverted if the netlist changes | `keep` |
