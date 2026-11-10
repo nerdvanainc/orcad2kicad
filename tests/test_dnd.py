@@ -221,5 +221,64 @@ class AppDropTest(_Tmp):
             app.destroy()
 
 
+class AppInputChangeTest(_Tmp):
+    """입력 파일이 바뀌면 이전 파일에서 자동으로 채운 칸(출력 폴더·프로젝트·넷리스트·보드)은 새 파일 기준으로
+    바뀌고, 사용자가 고친 값은 남는다. 같은 폴더에 설계가 여러 개 있을 때 이전 이름이 남던 문제."""
+
+    def setUp(self):
+        super().setUp()
+        from orcad2kicad import gui
+        os.environ['O2K_SETTINGS'] = os.path.join(self.d, 'settings.json')
+        self.addCleanup(os.environ.pop, 'O2K_SETTINGS', None)
+        self.a = self.mk('P/A.EDF')
+        self.b = self.mk('P/B.EDF')
+        self.app = gui.App()
+        self.app.withdraw()
+        self.addCleanup(self.app.destroy)
+
+    def test_second_drop_in_same_folder_updates_outdir_and_project(self):
+        self.app.on_files_dropped([self.a])
+        self.assertTrue(self.app.var_outdir.get().endswith('A_kicad'))
+        self.app.on_files_dropped([self.b])
+        self.assertTrue(self.app.var_outdir.get().endswith('B_kicad'))
+        self.assertEqual(self.app.var_project.get(), 'B')
+
+    def test_custom_values_are_kept(self):
+        self.app.on_files_dropped([self.a])
+        self.app.var_outdir.set(os.path.join(self.d, 'mine'))
+        self.app.var_project.set('MyName')
+        self.app.on_files_dropped([self.b])
+        self.assertEqual(self.app.var_outdir.get(), os.path.join(self.d, 'mine'))
+        self.assertEqual(self.app.var_project.get(), 'MyName')
+
+    def test_picking_a_new_file_updates_too(self):
+        self.app.var_edf.set(self.a)              # 파일 선택 버튼과 같은 경로(칸에 값이 들어감)
+        self.app.var_edf.set(self.b)
+        self.assertTrue(self.app.var_outdir.get().endswith('B_kicad'))
+        self.assertEqual(self.app.var_project.get(), 'B')
+
+    def test_values_restored_from_settings_follow_new_input(self):
+        from orcad2kicad.pipeline import default_outdir
+        self.app.apply_settings({'edf': self.a, 'outdir': default_outdir(self.a), 'project': 'A'})
+        self.app.var_edf.set(self.b)
+        self.assertTrue(self.app.var_outdir.get().endswith('B_kicad'))
+        self.assertEqual(self.app.var_project.get(), 'B')
+
+    def test_old_suggested_netlist_is_replaced(self):
+        na = self.mk('P/A.asc', b'*PADS2000*\n')
+        nb = self.mk('P/B.asc', b'*PADS2000*\n')
+        self.app.var_edf.set(self.a)
+        self.assertEqual(self.app.var_netlist.get(), na)
+        self.app.var_edf.set(self.b)
+        self.assertEqual(self.app.var_netlist.get(), nb)
+
+    def test_old_suggested_netlist_cleared_when_new_has_none(self):
+        self.mk('P/A.asc', b'*PADS2000*\n')
+        c = self.mk('Q/C.EDF')
+        self.app.var_edf.set(self.a)
+        self.app.var_edf.set(c)
+        self.assertEqual(self.app.var_netlist.get(), '')
+
+
 if __name__ == '__main__':
     unittest.main()

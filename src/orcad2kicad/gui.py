@@ -390,7 +390,8 @@ def drop_assignments(cls, current):
     (`_autofill_from_input`, 빈 칸만 채움)이 드롭한 값을 덮지 않고 빠진 것만 제안값으로 채운다.
       - 주 입력(EDIF/.DSN/.kicad_pro)이 있으면: 드롭이 준 칸은 덮어쓰고, 넷리스트/보드는 드롭이
         주지 않았으면 비운다(옛 설계의 값이 남지 않게). 주 입력 폴더가 이전과 다르면 출력
-        폴더·프로젝트 이름도 비워 새로 제안받게 하고, 같은 폴더면 사용자가 고친 값을 유지한다.
+        폴더·프로젝트 이름도 비워 새로 제안받게 한다. 같은 폴더면 여기서는 그대로 두고, 주 입력이 바뀔
+        때 도는 `_autofill_from_input` 이 직전 입력의 제안값 그대로인 칸만 새 파일 기준으로 바꾼다.
       - 넷리스트/보드만 있으면 그 칸만 바꾼다.
       - 쓸 것이 없으면 빈 dict."""
     given_primary = [(k, m) for k, m in _DROP_PRIMARY if cls.get(k)]
@@ -1051,21 +1052,40 @@ class App(tk.Tk if tk is not None else object):
         ex_sb.pack(side='right', fill='y')
 
     def _autofill_from_input(self, var):
-        """입력 파일(EDIF/.DSN/.kicad_pro) 칸이 실제 파일을 가리키게 되면 **비어 있는** 칸만
-        제안값으로 채운다: 출력 폴더(`<이름>_kicad`), 프로젝트 이름, 같은 폴더의 PADS 넷리스트/
-        보드 `.asc`(머리글로 판별, 이름이 맞는 것만). 이미 적힌 값은 건드리지 않는다."""
+        """입력 파일(EDIF/.DSN/.kicad_pro) 칸이 실제 파일을 가리키게 되면 제안값으로 채운다: 출력 폴더
+        (`<이름>_kicad`), 프로젝트 이름, 같은 폴더의 PADS 넷리스트/보드 `.asc`(머리글로 판별, 이름이 맞는 것만).
+
+        채우는 칸: 비어 있는 칸, 그리고 **직전 입력 파일의 제안값과 같은 칸**(자동으로 채워진 값이므로 새 파일을
+        따라간다 — 같은 폴더에 설계가 여러 개일 때 이전 이름이 남던 문제). 사용자가 고친 값은 건드리지 않는다.
+        저장된 설정으로 복원된 값도 직전 입력의 제안값과 비교하므로 다시 켠 뒤에도 같게 동작한다."""
         path = var.get().strip()
         if not path or not os.path.isfile(path):
             return
+        prev = getattr(self, '_last_input', None)
+        self._last_input = path
         try:
             from .pipeline import suggest_inputs
             sug = suggest_inputs(path)
+            old = suggest_inputs(prev) if prev and prev != path and os.path.isfile(prev) else {}
         except Exception:
             return
+
+        def same(a, b, is_path):
+            if not a or not b:
+                return False
+            if is_path:
+                return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+            return a == b
+
         for target, key in ((self.var_outdir, 'outdir'), (self.var_project, 'project'),
                             (self.var_netlist, 'netlist'), (self.var_board, 'board')):
-            if not target.get().strip() and sug.get(key):
-                target.set(os.path.normpath(sug[key]))
+            cur = target.get().strip()
+            new = sug.get(key)
+            was_auto = same(cur, old.get(key), key != 'project')
+            if new and (not cur or was_auto):
+                target.set(new if key == 'project' else os.path.normpath(new))
+            elif was_auto and not new:
+                target.set('')          # 이전 설계에서 자동으로 고른 넷리스트/보드가 남지 않게
 
     # ----- 파일 선택 -----
     def _pick_file(self, var, filetypes):

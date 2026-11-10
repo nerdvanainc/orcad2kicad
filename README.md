@@ -123,7 +123,7 @@ kicad-cli로 실행(임포터 결과는 나이틀리, orcad2kicad 결과는 정�
   받을 수 있습니다. 다운로드 후 무결성을 확인하십시오.
 
   ```powershell
-  Get-FileHash orcad2kicad-1.0.7-win64.zip -Algorithm SHA256
+  Get-FileHash orcad2kicad-1.0.8-win64.zip -Algorithm SHA256
   ```
 
   출력된 해시 값을 `SHA256SUMS.txt`에 적힌 값과 비교해서 일치하는지

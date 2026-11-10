@@ -4,6 +4,15 @@
 
 This file records the changes in each orcad2kicad release.
 
+## 1.0.8 (2026-11-11)
+
+Fixes the GUI keeping the old output folder and project name when the input file changes.
+
+- **Fields follow a new input file**: dropping or picking another design from the same folder left the output folder and
+  project name of the previous design. Fields that still hold the values auto-filled from the previous file (output folder,
+  project name, netlist, board) now follow the new file, and values you edited are kept. Values restored from saved settings
+  are judged the same way.
+
 ## 1.0.7 (2026-11-04)
 
 Fixes bottom-only pads lost by the PADS importer and PADS unit handling.

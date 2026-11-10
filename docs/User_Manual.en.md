@@ -838,7 +838,9 @@ Input frame appears when drop is available; on other platforms use the Browse bu
 - A drop containing an input file (EDIF/`.DSN`/`.kicad_pro`) replaces the netlist and board fields
   with what was dropped (cleared if absent, then auto-suggested from `.asc` files next to the
   input). If the new input lives in a different folder than before, output folder and project name
-  are re-suggested; in the same folder your edited values are kept. Dropping only a netlist/board
+  are re-suggested. In the same folder, output folder and project name that still hold the values
+  auto-filled from the previous file follow the new file, and values you edited are kept. Changing
+  the input file with the file picker works the same way. Dropping only a netlist/board
   changes just those fields. Drops are ignored while a run is in progress.
 
 Clicking "Run conversion" runs the pipeline in a separate thread (the window doesn't freeze), and
