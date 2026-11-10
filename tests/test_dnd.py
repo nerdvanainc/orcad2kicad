@@ -221,6 +221,7 @@ class AppDropTest(_Tmp):
             app.destroy()
 
 
+@unittest.skipUnless(tk_available(), 'no Tk display')
 class AppInputChangeTest(_Tmp):
     """입력 파일이 바뀌면 이전 파일에서 자동으로 채운 칸(출력 폴더·프로젝트·넷리스트·보드)은 새 파일 기준으로
     바뀌고, 사용자가 고친 값은 남는다. 같은 폴더에 설계가 여러 개 있을 때 이전 이름이 남던 문제."""
